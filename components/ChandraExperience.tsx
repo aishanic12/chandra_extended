@@ -38,7 +38,8 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 
 type Severity = "P1" | "P2" | "P3" | "P4";
 type IncidentStatus = "Resolved" | "Investigating" | "Escalated" | "Monitoring" | "Awaiting Approval";
-type ApprovalState = "Awaiting Review" | "Approved" | "Rejected" | "Escalated";
+type ApprovalState = "Awaiting Review" | "Approved" | "Rejected" | "Escalated" | "Timed Out";
+type EmailStatus = "pending" | "sent" | "viewed" | "approved" | "rejected";
 
 type OpsEvent = {
   id: string;
@@ -50,6 +51,10 @@ type OpsEvent = {
   account: string;
   confidence: number;
   resolution: string;
+  approvalState?: ApprovalState;
+  reviewer?: string;
+  lockState?: string;
+  escalation?: string;
 };
 
 type Incident = OpsEvent & {
@@ -57,6 +62,10 @@ type Incident = OpsEvent & {
   eta: string;
   rootCause: string;
   humanEscalation: string;
+  approvalState: ApprovalState;
+  reviewer: string;
+  lockState: string;
+  escalation: string;
 };
 
 type AuditRow = {
@@ -79,16 +88,128 @@ type ApprovalRow = {
   requested: string;
   decided: string;
   note: string;
+  account: string;
+  confidence: number;
+  requestedBy: string;
+  lockState: string;
+  emailStatus: EmailStatus;
+  pendingReason: string;
 };
 
-const metricSeed = [
-  { key: "P", label: "Productivity", value: 92, color: "#ff3b30", weight: "1.0x" },
-  { key: "Q", label: "Quality", value: 96, color: "#f4efe7", weight: "1.0x" },
-  { key: "E", label: "Efficiency", value: 89, color: "#ffb347", weight: "1.5x" },
-  { key: "G", label: "Goal Attainment", value: 87, color: "#ff6a3d", weight: "1.0x" },
-  { key: "R", label: "Reliability", value: 98, color: "#ffb347", weight: "1.5x" },
-  { key: "C", label: "Collaboration", value: 83, color: "#8ed9a8", weight: "1.0x" },
-  { key: "V", label: "Value Add", value: 94, color: "#ff3b30", weight: "1.0x" }
+type KraReview = {
+  id: string;
+  title: string;
+  objective: string;
+  target: string;
+  actual: string;
+  confidence: number;
+  automation: number;
+  impact: string;
+  evidence: string;
+  remediation: string;
+  weight: number;
+  score: number;
+  contribution: number;
+  rating: string;
+  color: string;
+};
+
+const kraReviewData: KraReview[] = [
+  {
+    id: "KRA-01",
+    title: "Incident Response Quality",
+    objective: "Contain P1/P2 events within enterprise MTTR targets.",
+    target: "MTTR < 8m",
+    actual: "5m 42s",
+    confidence: 94,
+    automation: 76,
+    impact: "Reduced blast radius and stabilized production service availability.",
+    evidence: "CHG-4912 / CloudTrail / Incident Stream",
+    remediation: "Automated containment with supervisor reviewed lock action.",
+    weight: 0.22,
+    score: 92,
+    contribution: 20.24,
+    rating: "High Reliability",
+    color: "#ff3b30"
+  },
+  {
+    id: "KRA-02",
+    title: "Governance Control",
+    objective: "Enforce human approval discipline for high-risk operations.",
+    target: "100% high-risk approvals",
+    actual: "98%",
+    confidence: 96,
+    automation: 68,
+    impact: "Maintained audit-ready posture while preserving required supervisor oversight.",
+    evidence: "GxP control map / Approval queue audit",
+    remediation: "Policy enforcement with approval lock state for destructive actions.",
+    weight: 0.20,
+    score: 91,
+    contribution: 18.2,
+    rating: "Audit Ready",
+    color: "#ffb347"
+  },
+  {
+    id: "KRA-03",
+    title: "Access Drift Control",
+    objective: "Detect and remediate IAM drift within control windows.",
+    target: "Drift auto-remediate 90% in 30m",
+    actual: "22m median",
+    confidence: 92,
+    automation: 64,
+    impact: "Minimized privilege escalation risk while preserving identity audit trails.",
+    evidence: "IAM Access Analyzer / drift rollback report",
+    remediation: "Automated IAM rollback with manual supervisor halt on sensitive changes.",
+    weight: 0.19,
+    score: 89,
+    contribution: 16.91,
+    rating: "Governed",
+    color: "#8ed9a8"
+  },
+  {
+    id: "KRA-04",
+    title: "Cost Anomaly Detection",
+    objective: "Reduce idle spend while preserving service continuity.",
+    target: "$150K avoided / 30d",
+    actual: "$182K prevented",
+    confidence: 93,
+    automation: 81,
+    impact: "Improved cloud economics and reduced unnecessary infrastructure waste.",
+    evidence: "Cost telemetry / FinOps playbook",
+    remediation: "Rightsizing automation with supervised cost impact review.",
+    weight: 0.20,
+    score: 93,
+    contribution: 18.6,
+    rating: "Operationally Efficient",
+    color: "#8ed9a8"
+  },
+  {
+    id: "KRA-05",
+    title: "Audit Evidence Coverage",
+    objective: "Preserve evidence completeness for regulated operations.",
+    target: ">95% evidence coverage",
+    actual: "95.4%",
+    confidence: 95,
+    automation: 84,
+    impact: "Delivered audit-ready evidence while keeping remediation transparent.",
+    evidence: "Immutable evidence packs / SOC2 readiness logs",
+    remediation: "Automated evidence capture integrated with every remediation step.",
+    weight: 0.19,
+    score: 90,
+    contribution: 17.1,
+    rating: "Trusted",
+    color: "#f4efe7"
+  }
+];
+
+const scoreMetrics = [
+  { key: "P", label: "Productivity", value: 92, weight: 1.0, contribution: 13, delta: "+13%", color: "#ff3b30", interpretation: "Delivery cadence" },
+  { key: "Q", label: "Quality", value: 96, weight: 1.0, contribution: 14, delta: "+14%", color: "#f4efe7", interpretation: "Code quality" },
+  { key: "E", label: "Efficiency", value: 89, weight: 1.5, contribution: 18, delta: "+18%", color: "#ffb347", interpretation: "Cycle time" },
+  { key: "G", label: "Goal Attainment", value: 87, weight: 1.0, contribution: 12, delta: "+12%", color: "#ff6a3d", interpretation: "Delivery alignment" },
+  { key: "R", label: "Reliability", value: 98, weight: 1.5, contribution: 21, delta: "+21%", color: "#ffb347", interpretation: "Availability" },
+  { key: "C", label: "Collaboration", value: 83, weight: 1.0, contribution: 11, delta: "+11%", color: "#8ed9a8", interpretation: "Team sync" },
+  { key: "V", label: "Value Add", value: 94, weight: 1.0, contribution: 12, delta: "+12%", color: "#ff3b30", interpretation: "Business impact" }
 ];
 
 const trendData = [
@@ -101,6 +222,14 @@ const trendData = [
   { t: "24", score: 95, risk: 12, kra: 93 }
 ];
 
+const costCards = [
+  { label: "API Cost Today", value: "$427.18", delta: "+3.2%", tone: "text-amber" },
+  { label: "AWS Cost MTD", value: "$182,940", delta: "-4.8%", tone: "text-emerald-300" },
+  { label: "Model Tokens (24h)", value: "84.3M", delta: "+11.6%", tone: "text-amber" },
+  { label: "Infra Load", value: "67%", delta: "stable", tone: "text-emerald-300" },
+  { label: "Est. Monthly Spend", value: "$248K", delta: "-2.1%", tone: "text-emerald-300" }
+];
+
 const baseEvents: OpsEvent[] = [
   {
     id: "evt-001",
@@ -111,7 +240,11 @@ const baseEvents: OpsEvent[] = [
     service: "IAM",
     account: "LS-Prod-2147",
     confidence: 96,
-    resolution: "Reverted policy to least-privilege baseline. Evidence attached to CHG-4912."
+    resolution: "Reverted policy to least-privilege baseline. Evidence attached to CHG-4912.",
+    approvalState: "Approved",
+    reviewer: "Mira Shah",
+    lockState: "Unlocked",
+    escalation: "None"
   },
   {
     id: "evt-002",
@@ -122,7 +255,11 @@ const baseEvents: OpsEvent[] = [
     service: "S3",
     account: "Clinical-Data-8821",
     confidence: 91,
-    resolution: "Public ACL blocked. Bucket policy quarantined. Awaiting human approval for production write-lock."
+    resolution: "Public ACL blocked. Bucket policy quarantined. Awaiting human approval for production write-lock.",
+    approvalState: "Awaiting Review",
+    reviewer: "Dr. Mira Shah",
+    lockState: "Remediation Paused",
+    escalation: "Security Review"
   },
   {
     id: "evt-003",
@@ -133,7 +270,11 @@ const baseEvents: OpsEvent[] = [
     service: "EC2",
     account: "Research-Compute-1190",
     confidence: 94,
-    resolution: "Idle burst fleet terminated post owner validation. Rightsizing ticket + billing trace generated."
+    resolution: "Idle burst fleet terminated post owner validation. Rightsizing ticket + billing trace generated.",
+    approvalState: "Approved",
+    reviewer: "FinOps",
+    lockState: "Released",
+    escalation: "None"
   },
   {
     id: "evt-004",
@@ -144,7 +285,11 @@ const baseEvents: OpsEvent[] = [
     service: "CloudTrail",
     account: "GxP-Audit-3308",
     confidence: 98,
-    resolution: "Trail target bucket encryption corrected. Delivery validation written to SOC2 pack."
+    resolution: "Trail target bucket encryption corrected. Delivery validation written to SOC2 pack.",
+    approvalState: "Approved",
+    reviewer: "Mira Shah",
+    lockState: "Unlocked",
+    escalation: "None"
   },
   {
     id: "evt-005",
@@ -155,7 +300,11 @@ const baseEvents: OpsEvent[] = [
     service: "IAM Identity Center",
     account: "Shared-Services-4472",
     confidence: 99,
-    resolution: "Conditional access rule applied to 18 stale users. Notification queued for identity ops."
+    resolution: "Conditional access rule applied to 18 stale users. Notification queued for identity ops.",
+    approvalState: "Approved",
+    reviewer: "IAM Ops",
+    lockState: "Unlocked",
+    escalation: "None"
   }
 ];
 
@@ -165,28 +314,44 @@ const incidents: Incident[] = [
     triage: "01m 12s",
     eta: "06m",
     rootCause: "Legacy data transfer role attempted public ACL write against regulated bucket.",
-    humanEscalation: "Production data plane approval"
+    humanEscalation: "Production data plane approval",
+    approvalState: "Awaiting Review",
+    reviewer: "Dr. Mira Shah",
+    lockState: "Remediation Paused",
+    escalation: "Security Review"
   },
   {
     ...baseEvents[0],
     triage: "42s",
     eta: "Complete",
     rootCause: "Terraform module drift from emergency role patch.",
-    humanEscalation: "None"
+    humanEscalation: "None",
+    approvalState: "Approved",
+    reviewer: "Mira Shah",
+    lockState: "Unlocked",
+    escalation: "None"
   },
   {
     ...baseEvents[2],
     triage: "02m 04s",
     eta: "Monitoring",
     rootCause: "Batch genomics workload left c7i fleet running after completion signal failed.",
-    humanEscalation: "Leadership digest queued"
+    humanEscalation: "Leadership digest queued",
+    approvalState: "Approved",
+    reviewer: "FinOps",
+    lockState: "Released",
+    escalation: "None"
   },
   {
     ...baseEvents[3],
     triage: "51s",
     eta: "Complete",
     rootCause: "KMS key alias mismatch after cross-account evidence bucket rotation.",
-    humanEscalation: "None"
+    humanEscalation: "None",
+    approvalState: "Approved",
+    reviewer: "Mira Shah",
+    lockState: "Unlocked",
+    escalation: "None"
   },
   {
     id: "evt-006",
@@ -201,115 +366,178 @@ const incidents: Incident[] = [
     triage: "01m 49s",
     eta: "18m",
     rootCause: "Suspicious AssumeRole chain from unmanaged workstation network.",
-    humanEscalation: "Security owner assigned"
+    humanEscalation: "Security owner assigned",
+    approvalState: "Escalated",
+    reviewer: "SecOps - D. Okafor",
+    lockState: "Remediation Paused",
+    escalation: "Security Owner"
   }
-];
-
-const tickerItems = [
-  { label: "Security anomalies", value: 7, tone: "text-signal" },
-  { label: "IAM drift events", value: 2, tone: "text-amber" },
-  { label: "Public exposure risks", value: 1, tone: "text-signal" },
-  { label: "Cost spikes", value: 3, tone: "text-amber" },
-  { label: "Compliance gaps", value: 4, tone: "text-frost" },
-  { label: "Unauthorized API calls", value: 1, tone: "text-signal" },
-  { label: "GuardDuty findings", value: 5, tone: "text-emerald-300" }
-];
-
-const kraRows = [
-  {
-    id: "KRA-01",
-    title: "Cloud Cost Anomaly Detection",
-    target: "Detect anomalies > $500/day within 1 hour",
-    actual: "97% detection rate",
-    confidence: 94,
-    automation: "72%",
-    impact: "Prevented $182K idle spend this quarter",
-    how: ["CloudWatch anomaly triggers", "Auto EC2 rightsizing", "Lambda remediation", "Continuous billing scans"]
-  },
-  {
-    id: "KRA-02",
-    title: "GxP Audit Evidence Coverage",
-    target: "Maintain > 92% evidence completeness",
-    actual: "95.4% completeness",
-    confidence: 96,
-    automation: "81%",
-    impact: "Zero open findings in last 3 audit cycles",
-    how: ["CloudTrail validation", "Security Hub control mapping", "Evidence pack generation", "Immutable S3 retention"]
-  },
-  {
-    id: "KRA-03",
-    title: "Privileged Access Drift Reduction",
-    target: "Reduce privilege drift within 30 minutes",
-    actual: "22 min median",
-    confidence: 91,
-    automation: "68%",
-    impact: "94% of drift auto-remediated without human action",
-    how: ["IAM Access Analyzer", "Least-privilege baselines", "Terraform PR prep", "Human approval for prod"]
-  },
-  {
-    id: "KRA-04",
-    title: "Mean Time to Remediate Incidents",
-    target: "MTTR < 8 minutes for P1/P2",
-    actual: "5m 42s median",
-    confidence: 93,
-    automation: "76%",
-    impact: "60% reduction in supervisor pager load",
-    how: ["Severity-aware runbooks", "Automated rollback orchestration", "Live blast-radius scoring", "Parallel evidence capture"]
-  },
-  {
-    id: "KRA-05",
-    title: "Regulatory Control Continuity",
-    target: "100% control coverage across SOC2 + 21 CFR Part 11",
-    actual: "98.7% control coverage",
-    confidence: 95,
-    automation: "84%",
-    impact: "Audit-ready posture sustained across 47 accounts",
-    how: ["Control-to-evidence mapping", "Drift alerting on regulated buckets", "Automated reviewer packets", "Continuous control attestation"]
-  }
-];
-
-const complianceData = [
-  { day: "Mon", soc2: 88, gxp: 84, policy: 91 },
-  { day: "Tue", soc2: 91, gxp: 87, policy: 92 },
-  { day: "Wed", soc2: 93, gxp: 90, policy: 94 },
-  { day: "Thu", soc2: 92, gxp: 93, policy: 95 },
-  { day: "Fri", soc2: 96, gxp: 95, policy: 96 }
-];
-
-const regionNodes = [
-  { label: "us-east-1", state: "active", load: 78, incidents: 2 },
-  { label: "us-west-2", state: "watch", load: 64, incidents: 1 },
-  { label: "eu-west-1", state: "active", load: 71, incidents: 0 },
-  { label: "ap-south-1", state: "review", load: 88, incidents: 3 },
-  { label: "ca-central-1", state: "active", load: 52, incidents: 0 },
-  { label: "eu-central-1", state: "active", load: 66, incidents: 1 }
-];
-
-const costCards = [
-  { label: "API Cost Today", value: "$427.18", delta: "+3.2%", tone: "text-amber" },
-  { label: "AWS Cost MTD", value: "$182,940", delta: "-4.8%", tone: "text-emerald-300" },
-  { label: "Model Tokens (24h)", value: "84.3M", delta: "+11.6%", tone: "text-amber" },
-  { label: "Infra Load", value: "67%", delta: "stable", tone: "text-emerald-300" },
-  { label: "Est. Monthly Spend", value: "$248K", delta: "-2.1%", tone: "text-emerald-300" }
 ];
 
 const auditSeed: AuditRow[] = [
-  { timestamp: "2026-05-18 14:42:11", incidentId: "INC-2044", remediation: "Revert IAM policy to baseline", account: "LS-Prod-2147", confidence: 96, reviewer: "Auto / Mira Shah", compliance: "SOC2-CC6.1", evidencePack: "EVD-9821" },
-  { timestamp: "2026-05-18 14:43:26", incidentId: "INC-2045", remediation: "Block public S3 ACL", account: "Clinical-Data-8821", confidence: 91, reviewer: "Pending / D. Okafor", compliance: "GxP-117", evidencePack: "EVD-9822" },
-  { timestamp: "2026-05-18 14:44:03", incidentId: "INC-2046", remediation: "Terminate idle EC2 fleet", account: "Research-Compute-1190", confidence: 94, reviewer: "Auto / FinOps", compliance: "Cost-Policy-04", evidencePack: "EVD-9823" },
-  { timestamp: "2026-05-18 14:45:38", incidentId: "INC-2047", remediation: "Repair CloudTrail KMS alias", account: "GxP-Audit-3308", confidence: 98, reviewer: "Auto / Mira Shah", compliance: "SOC2-CC7.2", evidencePack: "EVD-9824" },
-  { timestamp: "2026-05-18 14:46:19", incidentId: "INC-2048", remediation: "Enforce MFA on stale users", account: "Shared-Services-4472", confidence: 99, reviewer: "Auto / IAM Ops", compliance: "21CFR-Part11", evidencePack: "EVD-9825" },
-  { timestamp: "2026-05-18 14:47:54", incidentId: "INC-2049", remediation: "Revoke session, isolate role", account: "Pharma-Prod-7710", confidence: 87, reviewer: "Pending / SecOps", compliance: "SOC2-CC6.3", evidencePack: "EVD-9826" },
-  { timestamp: "2026-05-18 14:49:08", incidentId: "INC-2050", remediation: "Rotate KMS data key", account: "GxP-Audit-3308", confidence: 95, reviewer: "Auto / Mira Shah", compliance: "GxP-118", evidencePack: "EVD-9827" },
-  { timestamp: "2026-05-18 14:50:44", incidentId: "INC-2051", remediation: "Patch SG ingress drift", account: "LS-Prod-2147", confidence: 92, reviewer: "Auto / NetOps", compliance: "SOC2-CC6.6", evidencePack: "EVD-9828" }
+  {
+    timestamp: "2026-05-18 14:42:11",
+    incidentId: "INC-2044",
+    remediation: "Revert IAM policy to baseline",
+    account: "LS-Prod-2147",
+    confidence: 96,
+    reviewer: "Auto / Mira Shah",
+    compliance: "SOC2-CC6.1",
+    evidencePack: "EVD-9821"
+  },
+  {
+    timestamp: "2026-05-18 14:43:26",
+    incidentId: "INC-2045",
+    remediation: "Block public S3 ACL",
+    account: "Clinical-Data-8821",
+    confidence: 91,
+    reviewer: "Pending / D. Okafor",
+    compliance: "GxP-117",
+    evidencePack: "EVD-9822"
+  },
+  {
+    timestamp: "2026-05-18 14:44:03",
+    incidentId: "INC-2046",
+    remediation: "Terminate idle EC2 fleet",
+    account: "Research-Compute-1190",
+    confidence: 94,
+    reviewer: "Auto / FinOps",
+    compliance: "Cost-Policy-04",
+    evidencePack: "EVD-9823"
+  },
+  {
+    timestamp: "2026-05-18 14:45:38",
+    incidentId: "INC-2047",
+    remediation: "Repair CloudTrail KMS alias",
+    account: "GxP-Audit-3308",
+    confidence: 98,
+    reviewer: "Auto / Mira Shah",
+    compliance: "SOC2-CC7.2",
+    evidencePack: "EVD-9824"
+  },
+  {
+    timestamp: "2026-05-18 14:46:19",
+    incidentId: "INC-2048",
+    remediation: "Enforce MFA on stale users",
+    account: "Shared-Services-4472",
+    confidence: 99,
+    reviewer: "Auto / IAM Ops",
+    compliance: "21CFR-Part11",
+    evidencePack: "EVD-9825"
+  },
+  {
+    timestamp: "2026-05-18 14:47:54",
+    incidentId: "INC-2049",
+    remediation: "Revoke session, isolate role",
+    account: "Pharma-Prod-7710",
+    confidence: 87,
+    reviewer: "Pending / SecOps",
+    compliance: "SOC2-CC6.3",
+    evidencePack: "EVD-9826"
+  },
+  {
+    timestamp: "2026-05-18 14:49:08",
+    incidentId: "INC-2050",
+    remediation: "Rotate KMS data key",
+    account: "GxP-Audit-3308",
+    confidence: 95,
+    reviewer: "Auto / Mira Shah",
+    compliance: "GxP-118",
+    evidencePack: "EVD-9827"
+  },
+  {
+    timestamp: "2026-05-18 14:50:44",
+    incidentId: "INC-2051",
+    remediation: "Patch SG ingress drift",
+    account: "LS-Prod-2147",
+    confidence: 92,
+    reviewer: "Auto / NetOps",
+    compliance: "SOC2-CC6.6",
+    evidencePack: "EVD-9828"
+  }
 ];
 
 const approvalSeed: ApprovalRow[] = [
-  { id: "APV-501", incident: "S3 bucket exposure - production write-lock", severity: "P1", state: "Awaiting Review", reviewer: "Dr. Mira Shah", requested: "14:43:34", decided: "-", note: "Public ACL blocked; awaiting prod write-lock confirmation." },
-  { id: "APV-502", incident: "GuardDuty unauthorized API call", severity: "P2", state: "Escalated", reviewer: "SecOps - D. Okafor", requested: "14:48:02", decided: "-", note: "Forensic bundle awaiting security owner review." },
-  { id: "APV-503", incident: "Privileged role deletion (legacy admin)", severity: "P1", state: "Approved", reviewer: "Dr. Mira Shah", requested: "13:52:11", decided: "13:58:40", note: "Approved per least-privilege baseline. Rollback armed." },
-  { id: "APV-504", incident: "RDS snapshot cross-region copy", severity: "P3", state: "Approved", reviewer: "Data Gov - L. Chen", requested: "12:11:09", decided: "12:14:51", note: "Encryption-at-rest verified." },
-  { id: "APV-505", incident: "VPC peering deletion request", severity: "P2", state: "Rejected", reviewer: "Network - R. Patel", requested: "11:08:22", decided: "11:14:03", note: "Rejected: active workload dependency detected." }
+  {
+    id: "APV-501",
+    incident: "S3 bucket exposure - production write-lock",
+    severity: "P1",
+    state: "Awaiting Review",
+    reviewer: "Dr. Mira Shah",
+    requested: "14:43:34",
+    decided: "-",
+    note: "Public ACL blocked; awaiting prod write-lock confirmation.",
+    account: "Clinical-Data-8821",
+    confidence: 91,
+    requestedBy: "Chandra AI",
+    lockState: "Remediation Paused",
+    emailStatus: "sent",
+    pendingReason: "Dangerous S3 write-lock in production"
+  },
+  {
+    id: "APV-502",
+    incident: "GuardDuty unauthorized API call",
+    severity: "P2",
+    state: "Escalated",
+    reviewer: "SecOps - D. Okafor",
+    requested: "14:48:02",
+    decided: "-",
+    note: "Forensic bundle awaiting security owner review.",
+    account: "Pharma-Prod-7710",
+    confidence: 87,
+    requestedBy: "Chandra AI",
+    lockState: "Remediation Paused",
+    emailStatus: "pending",
+    pendingReason: "Privilege escalation chain detected"
+  },
+  {
+    id: "APV-503",
+    incident: "Privileged role deletion (legacy admin)",
+    severity: "P1",
+    state: "Approved",
+    reviewer: "Dr. Mira Shah",
+    requested: "13:52:11",
+    decided: "13:58:40",
+    note: "Approved per least-privilege baseline. Rollback armed.",
+    account: "LS-Prod-2147",
+    confidence: 89,
+    requestedBy: "Chandra AI",
+    lockState: "Unlocked",
+    emailStatus: "approved",
+    pendingReason: "High-risk IAM policy change"
+  },
+  {
+    id: "APV-504",
+    incident: "RDS snapshot cross-region copy",
+    severity: "P3",
+    state: "Approved",
+    reviewer: "Data Gov - L. Chen",
+    requested: "12:11:09",
+    decided: "12:14:51",
+    note: "Encryption-at-rest verified.",
+    account: "GxP-Audit-3308",
+    confidence: 95,
+    requestedBy: "Chandra AI",
+    lockState: "Unlocked",
+    emailStatus: "approved",
+    pendingReason: "Standard data replication"
+  },
+  {
+    id: "APV-505",
+    incident: "VPC peering deletion request",
+    severity: "P2",
+    state: "Rejected",
+    reviewer: "Network - R. Patel",
+    requested: "11:08:22",
+    decided: "11:14:03",
+    note: "Rejected: active workload dependency detected.",
+    account: "Shared-Services-4472",
+    confidence: 82,
+    requestedBy: "Chandra AI",
+    lockState: "Remediation Paused",
+    emailStatus: "rejected",
+    pendingReason: "Destructive network action"
+  }
 ];
 
 function nowTime(offset = 0) {
@@ -325,10 +553,10 @@ function Reveal({ children, className = "" }: { children: ReactNode; className?:
   return (
     <motion.div
       className={className}
-      initial={{ opacity: 0, y: 18 }}
+      initial={{ opacity: 0, y: 16 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-60px" }}
-      transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+      transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
     >
       {children}
     </motion.div>
@@ -354,7 +582,7 @@ function SeverityPill({ value }: { value: Severity }) {
     P3: "border-white/20 bg-white/[0.05] text-frost",
     P4: "border-emerald-300/35 bg-emerald-300/12 text-emerald-300"
   }[value];
-  return <span className={cx("inline-flex w-9 items-center justify-center border px-1.5 py-0.5 text-[0.62rem] font-semibold tracking-wider", tone)}>{value}</span>;
+  return <span className={cx("inline-flex w-10 items-center justify-center border px-1.5 py-0.5 text-[0.62rem] font-semibold tracking-wider", tone)}>{value}</span>;
 }
 
 function StatusDot({ status }: { status: IncidentStatus }) {
@@ -370,24 +598,35 @@ function StatusDot({ status }: { status: IncidentStatus }) {
 function ApprovalBadge({ state }: { state: ApprovalState }) {
   const tone = {
     "Awaiting Review": "border-amber/45 bg-amber/12 text-amber",
-    "Approved": "border-emerald-300/40 bg-emerald-300/12 text-emerald-300",
-    "Rejected": "border-signal/45 bg-signal/15 text-signal",
-    "Escalated": "border-signal/50 bg-signal/15 text-signal"
+    Approved: "border-emerald-300/40 bg-emerald-300/12 text-emerald-300",
+    Rejected: "border-signal/45 bg-signal/15 text-signal",
+    Escalated: "border-signal/50 bg-signal/15 text-signal",
+    "Timed Out": "border-white/20 bg-white/[0.06] text-frost"
   }[state];
   return <span className={cx("inline-flex items-center border px-2 py-0.5 text-[0.6rem] uppercase tracking-[0.18em]", tone)}>{state}</span>;
 }
 
-// Compact hero + global ops summary
+function EmailStatusPill({ status }: { status: EmailStatus }) {
+  const tone = {
+    pending: "border-amber/45 bg-amber/12 text-amber",
+    sent: "border-emerald-300/40 bg-emerald-300/12 text-emerald-300",
+    viewed: "border-emerald-300/40 bg-emerald-300/12 text-emerald-300",
+    approved: "border-emerald-300/40 bg-emerald-300/12 text-emerald-300",
+    rejected: "border-signal/45 bg-signal/15 text-signal"
+  }[status];
+  return <span className={cx("inline-flex items-center border px-2 py-0.5 text-[0.55rem] uppercase tracking-[0.18em]", tone)}>{status}</span>;
+}
+
 function CommandHeader() {
   return (
     <section className="relative px-5 pt-10 pb-6 md:px-10 md:pt-12">
       <div className="mx-auto max-w-[1480px]">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3 text-[0.62rem] uppercase tracking-[0.28em] text-muted">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-[0.65rem] uppercase tracking-[0.28em] text-muted">
+          <div className="flex items-center gap-3">
             <RadioTower size={14} className="text-signal" />
             <span>Chandra</span>
-            <span className="text-amber">L3 Digital Cloud Engineer</span>
-            <span className="text-frost/70">Human-Supervised</span>
+            <span className="text-amber">Enterprise Ops</span>
+            <span className="text-frost/70">Human-supervised workflow enforced</span>
           </div>
           <div className="flex items-center gap-2 border border-emerald-300/35 bg-emerald-300/10 px-3 py-1.5 text-[0.6rem] uppercase tracking-[0.22em] text-emerald-200">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 pulse-core" />
@@ -395,10 +634,16 @@ function CommandHeader() {
           </div>
         </div>
         <Reveal>
-          <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
-            <h1 className="display text-5xl uppercase leading-[0.85] text-frost md:text-7xl">Chandra</h1>
-            <div className="text-[0.66rem] uppercase tracking-[0.22em] text-muted">
-              Life Sciences <span className="text-amber">/ 21 CFR Part 11 / GxP</span>
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h1 className="display text-5xl uppercase leading-[0.85] text-frost md:text-6xl">Chandra</h1>
+              <p className="mt-2 max-w-2xl text-[0.76rem] uppercase tracking-[0.24em] text-muted">
+                Compact enterprise operations dashboard with human approval governance for high-risk remediation.
+              </p>
+            </div>
+            <div className="grid gap-2 rounded-2xl border border-white/10 bg-black/50 p-4 text-[0.68rem] uppercase tracking-[0.18em] text-muted">
+              <span className="text-amber">AI pause enforced for P1 / IAM / destructive / compliance-sensitive</span>
+              <span className="text-frost">Supervisor approval required before hazardous remediation.</span>
             </div>
           </div>
         </Reveal>
@@ -410,11 +655,10 @@ function CommandHeader() {
               ["6", "Active Incidents"],
               ["99.98%", "Worker Uptime"],
               ["5m 42s", "Median MTTR"],
-              ["95.4%", "Evidence Coverage"],
               ["68", "Workflows"],
               [nowTime(), "Last Action"]
             ].map(([value, label]) => (
-              <div key={label} className="border-l border-white/12 pl-3">
+              <div key={label as string} className="border-l border-white/12 pl-3">
                 <div className="text-lg text-frost">{value}</div>
                 <div className="mt-1 text-[0.56rem] uppercase tracking-[0.2em] text-muted">{label}</div>
               </div>
@@ -426,10 +670,9 @@ function CommandHeader() {
   );
 }
 
-// Operational waveform with legend
 function OperationalWaveform() {
   return (
-    <Reveal className="glass relative overflow-hidden p-4">
+    <Reveal className="glass overflow-hidden p-4">
       <SectionHead label="OPERATIONAL WAVEFORM" sub="24h telemetry" />
       <div className="grid gap-4 lg:grid-cols-[1.7fr_1fr]">
         <div className="h-44">
@@ -452,7 +695,7 @@ function OperationalWaveform() {
             ["#8ed9a8", "Stable Operations", "baseline KRA performance"],
             ["#ffb347", "Background Load", "ambient cloud workload"]
           ].map(([color, label, hint]) => (
-            <div key={label} className="flex items-center gap-2 border-l border-white/8 pl-2">
+            <div key={label as string} className="flex items-center gap-2 border-l border-white/8 pl-2">
               <span className="h-2 w-3" style={{ background: color }} />
               <div>
                 <div className="text-frost">{label}</div>
@@ -466,7 +709,6 @@ function OperationalWaveform() {
   );
 }
 
-// Cost Monitoring FinOps panel
 function CostMonitoring() {
   return (
     <Reveal className="glass overflow-hidden p-4">
@@ -484,15 +726,56 @@ function CostMonitoring() {
   );
 }
 
-// Live operations feed - max 5 visible, fixed height, internal scroll
 function useOperationalFeed() {
   const [events, setEvents] = useState<OpsEvent[]>(baseEvents);
 
   useEffect(() => {
-    const templates = [
-      { severity: "P2" as Severity, status: "Resolved" as IncidentStatus, incident: "IAM privilege reduced", service: "IAM", account: "Shared-Services-4472", confidence: 95, resolution: "Privilege boundary restored. Reviewer evidence generated." },
-      { severity: "P3" as Severity, status: "Monitoring" as IncidentStatus, incident: "Cost spike contained", service: "Compute Optimizer", account: "Research-Compute-1190", confidence: 92, resolution: "Autoscaling ceiling reduced. Orphaned volumes tagged." },
-      { severity: "P1" as Severity, status: "Escalated" as IncidentStatus, incident: "Unauthorized API call", service: "GuardDuty", account: "Pharma-Prod-7710", confidence: 88, resolution: "Session revoked. Principal isolated. Awaiting review." }
+    const templates: OpsEvent[] = [
+      {
+        id: "tmpl-001",
+        time: "00:00:00",
+        severity: "P2",
+        status: "Resolved",
+        incident: "IAM privilege reduced",
+        service: "IAM",
+        account: "Shared-Services-4472",
+        confidence: 95,
+        resolution: "Privilege boundary restored. Reviewer evidence generated.",
+        approvalState: "Approved",
+        reviewer: "Mira Shah",
+        lockState: "Unlocked",
+        escalation: "None"
+      },
+      {
+        id: "tmpl-002",
+        time: "00:00:00",
+        severity: "P3",
+        status: "Monitoring",
+        incident: "Cost spike contained",
+        service: "Compute Optimizer",
+        account: "Research-Compute-1190",
+        confidence: 92,
+        resolution: "Autoscaling ceiling reduced. Orphaned volumes tagged.",
+        approvalState: "Approved",
+        reviewer: "FinOps",
+        lockState: "Released",
+        escalation: "None"
+      },
+      {
+        id: "tmpl-003",
+        time: "00:00:00",
+        severity: "P1",
+        status: "Escalated",
+        incident: "Unauthorized API call",
+        service: "GuardDuty",
+        account: "Pharma-Prod-7710",
+        confidence: 88,
+        resolution: "Session revoked. Principal isolated. Awaiting review.",
+        approvalState: "Escalated",
+        reviewer: "SecOps - D. Okafor",
+        lockState: "Remediation Paused",
+        escalation: "Security Owner"
+      }
     ];
     const timer = window.setInterval(() => {
       const template = templates[Math.floor(Date.now() / 4000) % templates.length];
@@ -585,171 +868,57 @@ function LiveOpsStream({ events }: { events: OpsEvent[] }) {
   );
 }
 
-// Operational Ticker
-function OperationalTicker() {
-  return (
-    <section className="relative overflow-hidden border-y border-white/10 bg-black/45 py-2">
-      <div className="ticker-track flex min-w-max gap-3">
-        {[...tickerItems, ...tickerItems, ...tickerItems].map((item, index) => (
-          <div key={`${item.label}-${index}`} className="flex items-center gap-2 border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[0.6rem] uppercase tracking-[0.18em]">
-            <CircleDot size={10} className={item.tone} />
-            <span className="text-muted">{item.label}</span>
-            <motion.span
-              className={item.tone}
-              animate={{ opacity: [0.65, 1, 0.65] }}
-              transition={{ duration: 2.4, repeat: Infinity, delay: index * 0.05 }}
-            >
-              {item.value + (index % 2)}
-            </motion.span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-// Compact AWS Estate
-function AwsEstate() {
-  const stateTone = (state: string) =>
-    state === "active" ? "border-emerald-300/40 text-emerald-300" : state === "review" ? "border-signal/45 text-signal" : "border-amber/45 text-amber";
-
-  return (
-    <Reveal className="glass overflow-hidden p-4">
-      <SectionHead label="AWS REGION HEALTH" sub="14 regions · 63 services" />
-      <div className="grid gap-2 md:grid-cols-3 lg:grid-cols-6">
-        {regionNodes.map((node) => (
-          <div key={node.label} className={cx("border bg-black/40 px-3 py-2.5", stateTone(node.state))}>
-            <div className="flex items-center justify-between">
-              <span className="text-[0.7rem] uppercase tracking-[0.16em] text-frost">{node.label}</span>
-              <span className={cx("h-1.5 w-1.5 rounded-full pulse-core", node.state === "active" ? "bg-emerald-300" : node.state === "review" ? "bg-signal" : "bg-amber")} />
-            </div>
-            <div className="mt-2 flex items-center justify-between text-[0.58rem] uppercase tracking-[0.16em] text-muted">
-              <span>{node.state}</span>
-              <span>{node.load}% load</span>
-            </div>
-            <div className="mt-1 text-[0.58rem] uppercase tracking-[0.16em] text-muted">{node.incidents} open</div>
-          </div>
-        ))}
-      </div>
-    </Reveal>
-  );
-}
-
-// Performance index compressed
-function PerformanceIndex() {
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const timer = window.setInterval(() => setTick((value) => value + 1), 2200);
-    return () => window.clearInterval(timer);
-  }, []);
-  const metrics = metricSeed.map((metric, index) => ({
-    ...metric,
-    live: Math.max(72, Math.min(99, metric.value + ((tick + index) % 5) - 2))
-  }));
-  const score = Math.round(metrics.reduce((sum, metric) => sum + metric.live * (metric.weight === "1.5x" ? 1.5 : 1), 0) / 8);
-
-  return (
-    <Reveal className="glass overflow-hidden p-4">
-      <SectionHead label="PERFORMANCE INDEX" sub="(P×Q×1.5E) + (G×1.5R) + (C×V)" />
-      <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
-        <div className="flex flex-col items-center justify-center gap-2">
-          <div className="relative h-44 w-44">
-            <ResponsiveContainer width="100%" height="100%">
-              <RadialBarChart innerRadius="74%" outerRadius="100%" data={[{ name: "score", value: score, fill: "#ff3b30" }]} startAngle={90} endAngle={-270}>
-                <RadialBar dataKey="value" background={{ fill: "rgba(255,255,255,0.08)" }} cornerRadius={8} />
-              </RadialBarChart>
-            </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <motion.div key={score} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="display text-4xl text-frost">
-                {score}
-              </motion.div>
-              <div className="text-[0.55rem] uppercase tracking-[0.22em] text-muted">overall / 100</div>
-            </div>
-          </div>
-          <div className="flex w-full justify-between text-[0.55rem] uppercase tracking-[0.18em] text-muted">
-            <span>live</span>
-            <span className="text-emerald-300">stable</span>
-            <span>ws-ready</span>
-          </div>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {metrics.map((metric) => (
-            <div key={metric.key} className="border border-white/10 bg-black/30 p-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-lg" style={{ color: metric.color }}>{metric.key}</span>
-                <span className="text-[0.58rem] text-amber">{metric.weight}</span>
-              </div>
-              <div className="mt-1 text-[0.7rem] text-frost">{metric.label}</div>
-              <div className="mt-2 h-1 bg-white/10">
-                <motion.div className="h-full" style={{ background: metric.color }} animate={{ width: `${metric.live}%` }} transition={{ duration: 0.8 }} />
-              </div>
-              <div className="mt-1.5 text-right text-[0.58rem] text-muted">{metric.live}/100</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </Reveal>
-  );
-}
-
-// KRA Governance - 5 KRAs in compact accordion grid
 function KRAGovernance() {
-  const [openId, setOpenId] = useState<string | null>(kraRows[0].id);
   return (
     <section className="section-shell">
       <div className="section-inner">
-        <SectionHead label="KRA GOVERNANCE" sub="5 KRAs · audit-ready" />
+        <SectionHead label="KRA PERFORMANCE REVIEW" sub="Digital Cloud Engineer / AI FTE evaluation" />
         <Reveal>
           <div className="grid gap-3 lg:grid-cols-2">
-            {kraRows.map((kra) => {
-              const open = openId === kra.id;
-              return (
-                <div key={kra.id} className={cx("glass overflow-hidden p-3 transition", open && "ring-1 ring-signal/30")}>
-                  <button
-                    onClick={() => setOpenId(open ? null : kra.id)}
-                    className="flex w-full items-start justify-between gap-3 text-left"
-                  >
-                    <div className="flex-1">
-                      <div className="text-[0.6rem] uppercase tracking-[0.22em] text-amber">{kra.id}</div>
-                      <div className="mt-0.5 text-base text-frost">{kra.title}</div>
-                      <div className="mt-1 text-[0.66rem] uppercase tracking-[0.16em] text-muted">{kra.target}</div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 text-right text-[0.56rem] uppercase tracking-[0.16em] text-muted">
-                      <span><b className="block text-sm text-frost">{kra.actual.split(" ")[0]}</b>actual</span>
-                      <span><b className="block text-sm text-emerald-300">{kra.confidence}%</b>conf</span>
-                      <span><b className="block text-sm text-signal">{kra.automation}</b>auto</span>
-                    </div>
-                    <ChevronDown size={16} className={cx("mt-1 text-muted transition", open && "rotate-180")} />
-                  </button>
-                  <AnimatePresence>
-                    {open ? (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="mt-3 grid gap-2 border-t border-white/8 pt-3 md:grid-cols-2"
-                      >
-                        <div>
-                          <div className="text-[0.58rem] uppercase tracking-[0.22em] text-muted">Operational Impact</div>
-                          <p className="mt-1 text-[0.72rem] text-frost/85">{kra.impact}</p>
-                        </div>
-                        <div>
-                          <div className="text-[0.58rem] uppercase tracking-[0.22em] text-muted">How Achieved</div>
-                          <div className="mt-1 grid gap-0.5">
-                            {kra.how.map((h) => (
-                              <div key={h} className="flex items-start gap-1.5 text-[0.7rem] text-frost/80">
-                                <CheckCircle2 size={11} className="mt-0.5 shrink-0 text-emerald-300" />
-                                {h}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </motion.div>
-                    ) : null}
-                  </AnimatePresence>
+            {kraReviewData.map((kra) => (
+              <div key={kra.id} className="glass border border-white/10 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">{kra.id}</div>
+                    <div className="mt-2 text-base font-semibold uppercase tracking-[0.04em] text-frost">{kra.title}</div>
+                  </div>
+                  <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[0.65rem] uppercase tracking-[0.16em] text-emerald-300">
+                    {kra.rating}
+                  </div>
                 </div>
-              );
-            })}
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem]">
+                    <div className="uppercase tracking-[0.16em] text-muted">Target</div>
+                    <div className="mt-1 text-frost">{kra.target}</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem]">
+                    <div className="uppercase tracking-[0.16em] text-muted">Actual</div>
+                    <div className="mt-1 text-frost">{kra.actual}</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem]">
+                    <div className="uppercase tracking-[0.16em] text-muted">Operational Score</div>
+                    <div className="mt-1 text-frost">{kra.score}</div>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 text-[0.72rem]">
+                  <div className="flex items-center justify-between text-muted uppercase tracking-[0.16em]">
+                    <span>Confidence</span>
+                    <span>{kra.confidence}%</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                    <motion.div className="h-full rounded-full bg-emerald-300" animate={{ width: `${kra.confidence}%` }} transition={{ duration: 0.8 }} />
+                  </div>
+                  <div className="flex items-center justify-between text-muted uppercase tracking-[0.16em]">
+                    <span>Automation</span>
+                    <span>{kra.automation}%</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                    <motion.div className="h-full rounded-full bg-signal" animate={{ width: `${kra.automation}%` }} transition={{ duration: 0.8 }} />
+                  </div>
+                  <div className="text-[0.7rem] text-frost">Impact: {kra.impact}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </Reveal>
       </div>
@@ -757,7 +926,6 @@ function KRAGovernance() {
   );
 }
 
-// Active Incidents with sticky header + expandable rows
 function ActiveIncidents() {
   const [query, setQuery] = useState("");
   const [severity, setSeverity] = useState("All");
@@ -805,10 +973,24 @@ function ActiveIncidents() {
         ))}
       </div>
       <div className="max-h-[360px] overflow-auto scrollbar-mini">
-        <table className="w-full min-w-[920px] border-collapse text-left text-[0.72rem]">
+        <table className="w-full min-w-[1000px] border-collapse text-left text-[0.72rem]">
           <thead className="sticky top-0 z-10 bg-black/85 text-[0.58rem] uppercase tracking-[0.18em] text-muted backdrop-blur">
             <tr className="border-b border-white/12">
-              {["Sev", "Incident", "Account", "Service", "Status", "Conf", "Triage", "ETA", ""].map((head) => (
+              {[
+                "Sev",
+                "Incident",
+                "Account",
+                "Service",
+                "Approval",
+                "Reviewer",
+                "Lock",
+                "Escalation",
+                "Status",
+                "Conf",
+                "Triage",
+                "ETA",
+                ""
+              ].map((head) => (
                 <th key={head} className="px-2 py-2 font-normal">{head}</th>
               ))}
             </tr>
@@ -826,6 +1008,10 @@ function ActiveIncidents() {
                     <td className="px-2 py-2 text-frost">{incident.incident}</td>
                     <td className="px-2 py-2 text-muted">{incident.account}</td>
                     <td className="px-2 py-2 text-muted">{incident.service}</td>
+                    <td className="px-2 py-2"><ApprovalBadge state={incident.approvalState} /></td>
+                    <td className="px-2 py-2 text-muted">{incident.reviewer}</td>
+                    <td className="px-2 py-2 text-muted">{incident.lockState}</td>
+                    <td className="px-2 py-2 text-muted">{incident.escalation}</td>
                     <td className="px-2 py-2"><StatusDot status={incident.status} /></td>
                     <td className="px-2 py-2" title={`AI confidence: ${incident.confidence}%`}>
                       <span className={cx(incident.confidence >= 90 ? "text-emerald-300" : "text-amber")}>{incident.confidence}%</span>
@@ -836,7 +1022,7 @@ function ActiveIncidents() {
                   </tr>
                   {open ? (
                     <tr className="border-b border-white/8 bg-black/40">
-                      <td colSpan={9} className="px-3 py-2 text-[0.7rem]">
+                      <td colSpan={13} className="px-3 py-2 text-[0.7rem]">
                         <div className="grid gap-2 md:grid-cols-3">
                           <div>
                             <div className="text-[0.56rem] uppercase tracking-[0.2em] text-muted">Root Cause</div>
@@ -864,169 +1050,153 @@ function ActiveIncidents() {
   );
 }
 
-// Human Approval Workflow
+function generateApprovalEmail(approval: ApprovalRow) {
+  const subject = `[Action Required] ${approval.severity} Incident Approval for ${approval.account}`;
+  const body = `Incident: ${approval.incident}\nSeverity: ${approval.severity}\nAWS Account: ${approval.account}\nRecommendation: ${approval.note}\nAI Confidence: ${approval.confidence}%\nImpact: ${approval.pendingReason}\nRisk: High-risk operational action requiring supervisor review.\n\nPlease approve or reject via the operations dashboard.\n\nActions:\n- APPROVE REMEDIATION\n- REJECT ACTION\n- ESCALATE TO SECURITY\n`;
+  return { subject, body };
+}
+
+function createEmailPayload(approval: ApprovalRow) {
+  const { subject, body } = generateApprovalEmail(approval);
+  return {
+    to: `${approval.reviewer.replace(/ /g, ".").toLowerCase()}@example.com`,
+    subject,
+    body,
+    providerHints: ["AWS SES", "SendGrid", "Nodemailer", "Enterprise SMTP"]
+  };
+}
+
 function HumanReviewQueue() {
-  const counts = useMemo(() => {
-    return approvalSeed.reduce(
-      (acc, item) => {
-        acc[item.state] = (acc[item.state] ?? 0) + 1;
-        return acc;
-      },
-      {} as Record<ApprovalState, number>
+  const [approvals, setApprovals] = useState<ApprovalRow[]>(approvalSeed);
+  const pendingApprovals = approvals.filter((row) => row.state === "Awaiting Review" || row.state === "Escalated");
+  const visibleApprovals = pendingApprovals.slice(0, 4);
+
+  function markApproval(id: string, nextState: ApprovalState) {
+    setApprovals((current) =>
+      current.map((row) =>
+        row.id === id
+          ? {
+              ...row,
+              state: nextState,
+              decided: nextState === "Awaiting Review" ? "-" : nowTime(),
+              emailStatus: nextState === "Approved" ? "approved" : nextState === "Rejected" ? "rejected" : row.emailStatus,
+              note:
+                nextState === "Approved"
+                  ? `${row.note} Approved by supervisor.`
+                  : nextState === "Rejected"
+                  ? `${row.note} Rejected: human reviewer blocked execution.`
+                  : row.note
+            }
+          : row
+      )
     );
-  }, []);
+  }
+
+  function handleSendEmail(id: string) {
+    setApprovals((current) =>
+      current.map((row) =>
+        row.id === id
+          ? {
+              ...row,
+              emailStatus: row.emailStatus === "pending" ? "sent" : row.emailStatus === "sent" ? "viewed" : row.emailStatus
+            }
+          : row
+      )
+    );
+  }
+
+  if (visibleApprovals.length === 0) {
+    return (
+      <Reveal className="glass overflow-hidden p-4">
+        <SectionHead label="HUMAN APPROVAL CENTER" sub="No pending approvals" />
+        <p className="text-[0.8rem] text-frost/75">All high-risk incidents have been reviewed or paused. The system remains ready to surface the next supervisory decision.</p>
+      </Reveal>
+    );
+  }
 
   return (
     <Reveal className="glass overflow-hidden p-4">
-      <SectionHead label="HUMAN REVIEW QUEUE" sub="P1 + privileged + destructive actions" />
-      <div className="mb-3 grid gap-2 md:grid-cols-4">
-        {(["Awaiting Review", "Approved", "Rejected", "Escalated"] as ApprovalState[]).map((state) => (
+      <SectionHead label="HUMAN APPROVAL CENTER" sub="High-risk review queue" />
+      <div className="mb-3 grid gap-2 sm:grid-cols-2">
+        {(["Awaiting Review", "Approved", "Rejected", "Escalated", "Timed Out"] as ApprovalState[]).map((state) => (
           <div key={state} className="kpi-card">
             <span className="kpi-label">{state}</span>
-            <span className="kpi-value">{counts[state] ?? 0}</span>
+            <span className="kpi-value">{approvals.filter((row) => row.state === state).length}</span>
           </div>
         ))}
       </div>
-      <div className="max-h-[280px] overflow-auto scrollbar-mini">
-        <table className="w-full min-w-[820px] border-collapse text-left text-[0.7rem]">
-          <thead className="sticky top-0 bg-black/85 text-[0.56rem] uppercase tracking-[0.18em] text-muted backdrop-blur">
-            <tr className="border-b border-white/12">
-              {["ID", "Incident", "Sev", "State", "Reviewer", "Requested", "Decided", "Note"].map((h) => (
-                <th key={h} className="px-2 py-2 font-normal">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {approvalSeed.map((row) => (
-              <tr key={row.id} className="border-b border-white/8 text-frost/85">
-                <td className="px-2 py-2 text-muted">{row.id}</td>
-                <td className="px-2 py-2 text-frost">{row.incident}</td>
-                <td className="px-2 py-2"><SeverityPill value={row.severity} /></td>
-                <td className="px-2 py-2"><ApprovalBadge state={row.state} /></td>
-                <td className="px-2 py-2 text-muted">{row.reviewer}</td>
-                <td className="px-2 py-2 text-muted">{row.requested}</td>
-                <td className="px-2 py-2 text-muted">{row.decided}</td>
-                <td className="max-w-[240px] px-2 py-2 text-muted">{row.note}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="max-h-[320px] space-y-3 overflow-y-auto scrollbar-mini">
+        {visibleApprovals.map((approval) => {
+          const payload = createEmailPayload(approval);
+          return (
+            <div key={approval.id} className="glass overflow-hidden border border-white/10 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2 text-[0.65rem] uppercase tracking-[0.18em] text-amber">
+                    <span>{approval.id}</span>
+                    <ApprovalBadge state={approval.state} />
+                    <EmailStatusPill status={approval.emailStatus} />
+                  </div>
+                  <div className="text-lg text-frost">{approval.incident}</div>
+                  <div className="grid gap-2 sm:grid-cols-2 text-[0.72rem] text-muted">
+                    <span>Severity: {approval.severity}</span>
+                    <span>AWS Account: {approval.account}</span>
+                    <span>Requested by: {approval.requestedBy}</span>
+                    <span>Reviewer: {approval.reviewer}</span>
+                    <span>Lock: {approval.lockState}</span>
+                    <span>Risk: {approval.pendingReason}</span>
+                  </div>
+                </div>
+                <div className="grid gap-2 sm:w-[240px]">
+                  <button
+                    onClick={() => markApproval(approval.id, "Approved")}
+                    className="w-full rounded-xl border border-emerald-300/35 bg-emerald-300/12 px-3 py-2 text-[0.7rem] uppercase tracking-[0.18em] text-emerald-200 hover:bg-emerald-300/18"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => markApproval(approval.id, "Rejected")}
+                    className="w-full rounded-xl border border-signal/35 bg-signal/12 px-3 py-2 text-[0.7rem] uppercase tracking-[0.18em] text-signal hover:bg-signal/18"
+                  >
+                    Reject
+                  </button>
+                  <button
+                    onClick={() => markApproval(approval.id, "Escalated")}
+                    className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[0.7rem] uppercase tracking-[0.18em] text-frost hover:border-amber/40 hover:text-amber"
+                  >
+                    Escalate
+                  </button>
+                  <button
+                    onClick={() => handleSendEmail(approval.id)}
+                    className="w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-[0.7rem] uppercase tracking-[0.18em] text-muted hover:text-frost"
+                  >
+                    {approval.emailStatus === "pending" ? "Send Review Email" : approval.emailStatus === "sent" ? "Mark Viewed" : "Email Sent"}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 grid gap-2 rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem] text-muted">
+                <div className="flex items-center gap-2 text-[0.6rem] uppercase tracking-[0.18em] text-amber">
+                  <MailCheck size={12} /> Approval Email Scaffold
+                </div>
+                <div className="grid gap-1 sm:grid-cols-2">
+                  <div>
+                    <div className="text-[0.56rem] uppercase tracking-[0.2em] text-muted">Subject</div>
+                    <div className="text-frost">{payload.subject}</div>
+                  </div>
+                  <div>
+                    <div className="text-[0.56rem] uppercase tracking-[0.2em] text-muted">Provider Ready For</div>
+                    <div className="text-frost">{payload.providerHints.join(" · ")}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </Reveal>
   );
 }
 
-// Export helpers
-function downloadBlob(content: string, filename: string, mime: string) {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
-function escapeCsv(value: string | number) {
-  const text = String(value);
-  if (text.includes('"') || text.includes(",") || text.includes("\n")) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
-}
-
-function exportCsv(rows: AuditRow[]) {
-  const header = ["timestamp", "incident_id", "remediation", "account", "ai_confidence", "reviewer", "compliance", "evidence_pack"];
-  const body = rows.map((row) =>
-    [row.timestamp, row.incidentId, row.remediation, row.account, row.confidence, row.reviewer, row.compliance, row.evidencePack]
-      .map(escapeCsv)
-      .join(",")
-  );
-  downloadBlob([header.join(","), ...body].join("\n"), `chandra-audit-${Date.now()}.csv`, "text/csv;charset=utf-8");
-}
-
-function exportXlsx(rows: AuditRow[]) {
-  // SpreadsheetML 2003 — opens natively in Excel/LibreOffice. Scaffold for full xlsx package later.
-  const header = ["Timestamp", "Incident ID", "Remediation", "Account", "AI Confidence", "Reviewer", "Compliance", "Evidence Pack"];
-  const headerXml = header.map((cell) => `<Cell><Data ss:Type="String">${cell}</Data></Cell>`).join("");
-  const rowsXml = rows
-    .map((row) => {
-      const cells = [
-        `<Cell><Data ss:Type="String">${row.timestamp}</Data></Cell>`,
-        `<Cell><Data ss:Type="String">${row.incidentId}</Data></Cell>`,
-        `<Cell><Data ss:Type="String">${row.remediation}</Data></Cell>`,
-        `<Cell><Data ss:Type="String">${row.account}</Data></Cell>`,
-        `<Cell><Data ss:Type="Number">${row.confidence}</Data></Cell>`,
-        `<Cell><Data ss:Type="String">${row.reviewer}</Data></Cell>`,
-        `<Cell><Data ss:Type="String">${row.compliance}</Data></Cell>`,
-        `<Cell><Data ss:Type="String">${row.evidencePack}</Data></Cell>`
-      ].join("");
-      return `<Row>${cells}</Row>`;
-    })
-    .join("");
-  const xml = `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-  <Worksheet ss:Name="Chandra Audit">
-    <Table>
-      <Row>${headerXml}</Row>
-      ${rowsXml}
-    </Table>
-  </Worksheet>
-</Workbook>`;
-  downloadBlob(xml, `chandra-audit-${Date.now()}.xls`, "application/vnd.ms-excel");
-}
-
-function exportPdf(rows: AuditRow[]) {
-  // Scaffold: opens a print-optimized view. Wire jsPDF for inline binary PDF if needed.
-  const rowsHtml = rows
-    .map(
-      (row) => `
-      <tr>
-        <td>${row.timestamp}</td>
-        <td>${row.incidentId}</td>
-        <td>${row.remediation}</td>
-        <td>${row.account}</td>
-        <td>${row.confidence}%</td>
-        <td>${row.reviewer}</td>
-        <td>${row.compliance}</td>
-        <td>${row.evidencePack}</td>
-      </tr>`
-    )
-    .join("");
-  const doc = `<!doctype html><html><head><title>Chandra Audit Export</title>
-<style>
-  body{font-family:ui-monospace,Consolas,monospace;color:#111;padding:24px;}
-  h1{font-size:18px;margin:0 0 8px;}
-  .meta{color:#555;font-size:11px;margin-bottom:18px;}
-  table{width:100%;border-collapse:collapse;font-size:11px;}
-  th,td{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;}
-  th{background:#f4f4f4;text-transform:uppercase;font-size:9px;letter-spacing:1px;}
-  @media print{button{display:none;}}
-</style></head>
-<body>
-  <h1>Chandra Audit Trail — Evidence Export</h1>
-  <div class="meta">Generated ${new Date().toISOString()} · Records: ${rows.length} · L3 Human-Supervised AI Digital Worker</div>
-  <button onclick="window.print()" style="margin-bottom:12px;padding:6px 10px;font-size:11px;">Print / Save as PDF</button>
-  <table>
-    <thead><tr><th>Timestamp</th><th>Incident</th><th>Remediation</th><th>Account</th><th>Conf</th><th>Reviewer</th><th>Compliance</th><th>Evidence</th></tr></thead>
-    <tbody>${rowsHtml}</tbody>
-  </table>
-  <script>setTimeout(function(){window.print();},250);</script>
-</body></html>`;
-  const printWindow = window.open("", "_blank");
-  if (printWindow) {
-    printWindow.document.open();
-    printWindow.document.write(doc);
-    printWindow.document.close();
-  } else {
-    downloadBlob(doc, `chandra-audit-${Date.now()}.html`, "text/html;charset=utf-8");
-  }
-}
-
-// Audit Logs with filters + exports
 function AuditLogs() {
   const [query, setQuery] = useState("");
   const [timeWindow, setTimeWindow] = useState<"hourly" | "daily" | "weekly" | "monthly">("daily");
@@ -1113,59 +1283,116 @@ function AuditLogs() {
   );
 }
 
-// Compliance compact
-function ComplianceStatus() {
+function PerformanceIndex() {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((value) => value + 1), 2200);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const formula = "(P × Q × 1.5E) + (G × 1.5R) + (C × V)";
+  const weightedRaw = scoreMetrics.reduce((sum, metric) => sum + metric.value * metric.weight, 0);
+  const overallScore = Math.round(weightedRaw / 8 + 0.4);
+  const descriptor = overallScore >= 94 ? "Excellent" : overallScore >= 90 ? "Stable" : overallScore >= 86 ? "Audit Ready" : "High Reliability";
+  const topContributions = scoreMetrics
+    .slice()
+    .sort((a, b) => b.contribution - a.contribution)
+    .slice(0, 3);
+
   return (
-    <Reveal className="glass p-4">
-      <SectionHead label="COMPLIANCE STATUS" sub="SOC2 · GxP · 21 CFR Part 11" />
-      <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
-        <div className="h-48">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={complianceData} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
-              <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-              <XAxis dataKey="day" tick={{ fill: "#928a80", fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis hide domain={[70, 100]} />
-              <Tooltip contentStyle={{ background: "#0d0d0f", border: "1px solid rgba(255,255,255,0.14)", fontSize: 12 }} />
-              <Area type="monotone" dataKey="soc2" stroke="#ff3b30" fill="rgba(255,59,48,0.22)" name="SOC2" />
-              <Area type="monotone" dataKey="gxp" stroke="#ffb347" fill="rgba(255,179,71,0.16)" name="GxP" />
-              <Line type="monotone" dataKey="policy" stroke="#8ed9a8" strokeWidth={1.6} dot={false} name="Policy" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            ["96%", "SOC2 Evidence"],
-            ["95%", "GxP Coverage"],
-            ["97%", "Internal Policy"],
-            ["94%", "Audit Readiness"],
-            ["14:45", "Last Evidence"],
-            ["1.8s", "Retrieval Latency"]
-          ].map(([value, label]) => (
-            <div key={label} className="kpi-card">
-              <span className="kpi-label">{label}</span>
-              <span className="kpi-value">{value}</span>
+    <Reveal className="glass overflow-hidden p-3">
+      <SectionHead label="PERFORMANCE SCORING ENGINE" sub="FTE operational score & weighted metric system" />
+      <div className="grid gap-3 items-center lg:grid-cols-[220px_1fr_260px]">
+        {/* LEFT: compact gauge */}
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-white/10 bg-black/25 p-2">
+          <div className="relative h-32 w-32">
+            <ResponsiveContainer width="100%" height="100%">
+              <RadialBarChart innerRadius="68%" outerRadius="100%" data={[{ name: "score", value: overallScore, fill: "#ff3b30" }]} startAngle={90} endAngle={-270}>
+                <RadialBar dataKey="value" background={{ fill: "rgba(255,255,255,0.06)" }} cornerRadius={6} />
+              </RadialBarChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <motion.div key={overallScore} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-3xl font-semibold text-frost">
+                {overallScore}
+              </motion.div>
+              <div className="text-[0.6rem] uppercase tracking-[0.18em] text-muted">FTE Score</div>
             </div>
-          ))}
+          </div>
+          <div className="mt-2 text-[0.68rem] text-amber uppercase tracking-[0.14em]">{descriptor}</div>
+        </div>
+
+        {/* CENTER: formula and weighted summary */}
+        <div className="px-2">
+          <div className="flex items-center justify-between">
+            <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">Formula</div>
+            <div className="text-[0.72rem] text-muted">Compact weighted scoring</div>
+          </div>
+          <div className="mt-2 rounded-2xl border border-white/10 bg-black/25 p-2 text-sm text-frost">
+            <div className="font-mono text-sm">{formula}</div>
+            <div className="mt-2 grid grid-cols-3 gap-2 text-[0.72rem] text-muted">
+              <div>
+                <div className="uppercase text-[0.62rem] text-muted">Weighted sum</div>
+                <div className="text-frost">{Math.round(weightedRaw)}</div>
+              </div>
+              <div>
+                <div className="uppercase text-[0.62rem] text-muted">Gov factor</div>
+                <div className="text-frost">0.96</div>
+              </div>
+              <div>
+                <div className="uppercase text-[0.62rem] text-muted">AI bonus</div>
+                <div className="text-frost">+4</div>
+              </div>
+            </div>
+          </div>
+          <div className="mt-2 grid gap-2">
+            {scoreMetrics.map((m) => (
+              <div key={m.key} className="flex items-center justify-between text-[0.72rem]">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 text-[0.78rem] font-semibold text-frost">{m.key}</div>
+                  <div className="text-[0.72rem] text-muted">{m.label}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="text-[0.8rem] text-frost">{m.value}</div>
+                  <div className="text-[0.72rem] text-muted">{m.delta}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* RIGHT: compact contribution chips */}
+        <div className="px-2">
+          <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">Contributions</div>
+          <div className="mt-2 grid gap-2">
+            {scoreMetrics.map((metric) => (
+              <div key={metric.key} className="flex items-center justify-between rounded-full border border-white/6 bg-black/20 px-3 py-1 text-[0.72rem]">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full" style={{ background: metric.color }} />
+                  <div className="text-frost">{metric.label}</div>
+                </div>
+                <div className="text-[0.85rem] font-semibold text-frost">{metric.contribution}%</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </Reveal>
   );
 }
 
-// Ops Copilot with notification badge
 function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unread: number }) {
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState([
-    { role: "system", text: "Context synchronized. Latest event + KRA evidence available.", meta: "memory: incidents / KRA / audit" },
-    { role: "chandra", text: "Latest P1 exposure event is awaiting production data-plane approval. Public ACL blocked; evidence attached.", meta: "confidence 91% / live feed" }
+    { role: "system", text: "Context synchronized. Latest high-risk incident status available.", meta: "memory: incidents / approvals / audit" },
+    { role: "chandra", text: "Latest P1 incident requires supervisor approval before destructive remediation is executed.", meta: "confidence 91% / approval locked" }
   ]);
   const [alerts] = useState([
-    "P1 awaiting human approval (S3 exposure)",
-    "GuardDuty finding escalated to SecOps",
-    "Cost spike contained in Research-Compute"
+    "Pending human approvals require review",
+    "P1 incident on Clinical-Data-8821 awaiting lock release",
+    "Escalated GuardDuty action paused for SecOps"
   ]);
-  const suggestions = ["/summarize-p1-incidents", "/show-kra-risk", "/generate-audit-report", "/draft-ops-mail"];
+  const suggestions = ["/review-pending-approvals", "/summarize-high-risk-incidents", "/draft-approval-email", "/explain-governance"];
 
   function submit(value = prompt) {
     const command = value.trim();
@@ -1177,8 +1404,8 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
         role: "chandra",
         text:
           command.includes("mail") || command.includes("notify")
-            ? `Draft prepared: ${latestEvent.incident} is ${latestEvent.status.toLowerCase()} with ${latestEvent.confidence}% confidence.`
-            : `Operational answer: ${latestEvent.incident} in ${latestEvent.account} handled via current remediation chain.`,
+            ? `Draft prepared: ${latestEvent.incident} is awaiting review for high-risk remediation with ${latestEvent.confidence}% confidence.`
+            : `Operational guidance: ${latestEvent.incident} is paused until supervisor approval ${latestEvent.status === "Awaiting Approval" ? "is granted" : "is confirmed"}.`,
         meta: `trace: ${latestEvent.service} / ${latestEvent.account} / ${latestEvent.time}`
       }
     ]);
@@ -1196,7 +1423,7 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
                 <Bot size={16} className="text-signal" />
                 <div>
                   <div className="text-[0.72rem] uppercase tracking-[0.2em] text-frost">Chandra Ops Copilot</div>
-                  <div className="text-[0.58rem] uppercase tracking-[0.16em] text-emerald-300">live context synced</div>
+                  <div className="text-[0.58rem] uppercase tracking-[0.16em] text-emerald-300">approval-aware workflow</div>
                 </div>
               </div>
               <button aria-label="Close copilot" onClick={() => setOpen(false)} className="text-muted hover:text-frost">
@@ -1205,7 +1432,7 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
             </div>
             <div className="border-b border-white/8 bg-signal/[0.06] px-3 py-2">
               <div className="mb-1 flex items-center gap-1.5 text-[0.55rem] uppercase tracking-[0.18em] text-signal">
-                <AlertTriangle size={11} /> {alerts.length} unread alerts
+                <AlertTriangle size={11} /> {alerts.length} approval-aware alerts
               </div>
               <ul className="space-y-0.5 text-[0.65rem] text-frost/85">
                 {alerts.map((alert) => (
@@ -1215,7 +1442,7 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
             </div>
             <div className="max-h-[300px] space-y-2 overflow-y-auto p-3 scrollbar-mini">
               {messages.map((message, index) => (
-                <div key={index} className={cx("border p-2 text-[0.7rem]", message.role === "supervisor" ? "ml-6 border-amber/30 bg-amber/8" : "mr-3 border-white/10 bg-black/35")}>
+                <div key={index} className={cx("border p-2 text-[0.7rem]", message.role === "supervisor" ? "ml-6 border-amber/30 bg-amber/8" : "mr-3 border-white/10 bg-black/35")}> 
                   <div className="mb-1 text-[0.55rem] uppercase tracking-[0.18em] text-muted">{message.role}</div>
                   <div className="leading-5 text-frost/88">{message.text}</div>
                   <div className="mt-1.5 border-l border-signal/40 pl-2 text-[0.55rem] uppercase tracking-[0.14em] text-muted">{message.meta}</div>
@@ -1223,9 +1450,9 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
               ))}
               <div className="border border-emerald-300/20 bg-emerald-300/8 p-2 text-[0.7rem]">
                 <div className="mb-1 flex items-center gap-1.5 text-[0.55rem] uppercase tracking-[0.18em] text-emerald-300">
-                  <MailCheck size={11} /> queued communication
+                  <MailCheck size={11} /> Supervisor guidance ready
                 </div>
-                <p className="text-frost/82">Incident closure note ready when all P1 items resolved above 90% confidence.</p>
+                <p className="text-frost/82">Chandra will not execute dangerous operations until explicit approval is recorded.</p>
               </div>
             </div>
             <div className="border-t border-white/10 p-3">
@@ -1241,7 +1468,7 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
                 <input
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
-                  placeholder="Ask about incidents, KRAs, evidence, notifications"
+                  placeholder="Ask about approvals, risk, or remediation state"
                   className="min-w-0 flex-1 bg-transparent text-[0.7rem] text-frost outline-none placeholder:text-muted"
                 />
                 <button aria-label="Send" className="text-signal hover:text-frost"><Send size={13} /></button>
@@ -1272,43 +1499,43 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
 export function ChandraExperience() {
   const events = useOperationalFeed();
   const unread = useMemo(() => events.filter((e) => e.severity === "P1" || e.status === "Awaiting Approval" || e.status === "Escalated").length, [events]);
+  const pendingApprovals = approvalSeed.filter((row) => row.state === "Awaiting Review" || row.state === "Escalated");
 
   return (
     <main className="bg-obsidian text-frost">
       <CommandHeader />
 
-      {/* Primary operational pane: waveform + cost + live stream + AWS health */}
       <section className="section-shell">
         <div className="section-inner grid gap-3 lg:grid-cols-12">
           <div className="lg:col-span-7 space-y-3">
             <OperationalWaveform />
             <CostMonitoring />
-            <AwsEstate />
           </div>
           <div className="lg:col-span-5 space-y-3">
             <LiveOpsStream events={events} />
-            <HumanReviewQueue />
+            {pendingApprovals.length > 0 ? <HumanReviewQueue /> : null}
           </div>
         </div>
       </section>
 
-      <OperationalTicker />
 
-      {/* Active incidents + performance index side-by-side */}
       <section className="section-shell">
         <div className="section-inner grid gap-3 lg:grid-cols-12">
-          <div className="lg:col-span-7"><ActiveIncidents /></div>
-          <div className="lg:col-span-5"><PerformanceIndex /></div>
+          <div className="lg:col-span-12"><ActiveIncidents /></div>
+        </div>
+      </section>
+
+      <section className="section-shell">
+        <div className="section-inner">
+          <div className="w-full"><PerformanceIndex /></div>
         </div>
       </section>
 
       <KRAGovernance />
 
-      {/* Compliance + Audit Trail */}
       <section className="section-shell">
         <div className="section-inner grid gap-3 lg:grid-cols-12">
-          <div className="lg:col-span-5"><ComplianceStatus /></div>
-          <div className="lg:col-span-7"><AuditLogs /></div>
+          <div className="lg:col-span-12"><AuditLogs /></div>
         </div>
       </section>
 
@@ -1327,4 +1554,83 @@ export function ChandraExperience() {
       <OperationsCopilot latestEvent={events[0]} unread={unread} />
     </main>
   );
+}
+
+function downloadBlob(content: string | Blob, filename: string, mime: string) {
+  const blob = typeof content === "string" ? new Blob([content], { type: mime }) : content;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function escapeCsv(value: string | number) {
+  const text = String(value);
+  if (text.includes('"') || text.includes(",") || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function exportCsv(rows: AuditRow[]) {
+  const header = ["timestamp", "incident_id", "remediation", "account", "ai_confidence", "reviewer", "compliance", "evidence_pack"];
+  const body = rows.map((row) =>
+    [row.timestamp, row.incidentId, row.remediation, row.account, row.confidence, row.reviewer, row.compliance, row.evidencePack]
+      .map(escapeCsv)
+      .join(",")
+  );
+  downloadBlob([header.join(","), ...body].join("\n"), `chandra-audit-${Date.now()}.csv`, "text/csv;charset=utf-8");
+}
+
+function exportXlsx(rows: AuditRow[]) {
+  const header = ["Timestamp", "Incident ID", "Remediation", "Account", "AI Confidence", "Reviewer", "Compliance", "Evidence Pack"];
+  const headerXml = header.map((cell) => `<Cell><Data ss:Type="String">${cell}</Data></Cell>`).join("");
+  const rowsXml = rows
+    .map((row) => {
+      const cells = [
+        `<Cell><Data ss:Type="String">${row.timestamp}</Data></Cell>`,
+        `<Cell><Data ss:Type="String">${row.incidentId}</Data></Cell>`,
+        `<Cell><Data ss:Type="String">${row.remediation}</Data></Cell>`,
+        `<Cell><Data ss:Type="String">${row.account}</Data></Cell>`,
+        `<Cell><Data ss:Type="Number">${row.confidence}</Data></Cell>`,
+        `<Cell><Data ss:Type="String">${row.reviewer}</Data></Cell>`,
+        `<Cell><Data ss:Type="String">${row.compliance}</Data></Cell>`,
+        `<Cell><Data ss:Type="String">${row.evidencePack}</Data></Cell>`
+      ].join("");
+      return `<Row>${cells}</Row>`;
+    })
+    .join("");
+  const xml = `<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n  <Worksheet ss:Name="Chandra Audit">\n    <Table>\n      <Row>${headerXml}</Row>\n      ${rowsXml}\n    </Table>\n  </Worksheet>\n</Workbook>`;
+  downloadBlob(xml, `chandra-audit-${Date.now()}.xls`, "application/vnd.ms-excel");
+}
+
+function exportPdf(rows: AuditRow[]) {
+  const rowsHtml = rows
+    .map(
+      (row) => `
+      <tr>
+        <td>${row.timestamp}</td>
+        <td>${row.incidentId}</td>
+        <td>${row.remediation}</td>
+        <td>${row.account}</td>
+        <td>${row.confidence}%</td>
+        <td>${row.reviewer}</td>
+        <td>${row.compliance}</td>
+        <td>${row.evidencePack}</td>
+      </tr>`
+    )
+    .join("");
+  const doc = `<!doctype html><html><head><title>Chandra Audit Export</title>\n<style>\n  body{font-family:ui-monospace,Consolas,monospace;color:#111;padding:24px;}\n  h1{font-size:18px;margin:0 0 8px;}\n  .meta{color:#555;font-size:11px;margin-bottom:18px;}\n  table{width:100%;border-collapse:collapse;font-size:11px;}\n  th,td{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;}\n  th{background:#f4f4f4;text-transform:uppercase;font-size:9px;letter-spacing:1px;}\n  @media print{button{display:none;}}\n</style></head><body>\n  <h1>Chandra Audit Trail — Evidence Export</h1>\n  <div class="meta">Generated ${new Date().toISOString()} · Records: ${rows.length} · L3 Human-Supervised AI Digital Worker</div>\n  <button onclick="window.print()" style="margin-bottom:12px;padding:6px 10px;font-size:11px;">Print / Save as PDF</button>\n  <table>\n    <thead><tr><th>Timestamp</th><th>Incident</th><th>Remediation</th><th>Account</th><th>Conf</th><th>Reviewer</th><th>Compliance</th><th>Evidence</th></tr></thead>\n    <tbody>${rowsHtml}</tbody>\n  </table>\n  <script>setTimeout(function(){window.print();},250);</script>\n</body></html>`;
+  const printWindow = window.open("", "_blank");
+  if (printWindow) {
+    printWindow.document.open();
+    printWindow.document.write(doc);
+    printWindow.document.close();
+  } else {
+    downloadBlob(doc, `chandra-audit-${Date.now()}.html`, "text/html;charset=utf-8");
+  }
 }
