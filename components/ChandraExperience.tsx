@@ -549,6 +549,15 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
+function ClientTime({ offset = 0 }: { offset?: number }) {
+  const [time, setTime] = useState(() => nowTime(offset));
+  useEffect(() => {
+    const t = window.setInterval(() => setTime(nowTime(offset)), 1000);
+    return () => window.clearInterval(t);
+  }, [offset]);
+  return <>{time}</>;
+}
+
 function Reveal({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
     <motion.div
@@ -634,12 +643,9 @@ function CommandHeader() {
           </div>
         </div>
         <Reveal>
-          <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+          <div className="mb-2 flex flex-wrap items-end justify-between gap-4">
             <div>
               <h1 className="display text-5xl uppercase leading-[0.85] text-frost md:text-6xl">Chandra</h1>
-              <p className="mt-2 max-w-2xl text-[0.76rem] uppercase tracking-[0.24em] text-muted">
-                Compact enterprise operations dashboard with human approval governance for high-risk remediation.
-              </p>
             </div>
             <div className="grid gap-2 rounded-2xl border border-white/10 bg-black/50 p-4 text-[0.68rem] uppercase tracking-[0.18em] text-muted">
               <span className="text-amber">AI pause enforced for P1 / IAM / destructive / compliance-sensitive</span>
@@ -656,10 +662,10 @@ function CommandHeader() {
               ["99.98%", "Worker Uptime"],
               ["5m 42s", "Median MTTR"],
               ["68", "Workflows"],
-              [nowTime(), "Last Action"]
-            ].map(([value, label]) => (
-              <div key={label as string} className="border-l border-white/12 pl-3">
-                <div className="text-lg text-frost">{value}</div>
+              [<ClientTime key="client-time" />, "Last Action"]
+            ].map(([value, label], idx) => (
+              <div key={String(label) + idx} className="border-l border-white/12 pl-3">
+                <div className="text-lg text-frost">{value as any}</div>
                 <div className="mt-1 text-[0.56rem] uppercase tracking-[0.2em] text-muted">{label}</div>
               </div>
             ))}
@@ -675,7 +681,7 @@ function OperationalWaveform() {
     <Reveal className="glass overflow-hidden p-4">
       <SectionHead label="OPERATIONAL WAVEFORM" sub="24h telemetry" />
       <div className="grid gap-4 lg:grid-cols-[1.7fr_1fr]">
-        <div className="h-44">
+        <div className="h-44 min-h-[176px]">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={trendData.concat(trendData)} margin={{ top: 6, right: 10, bottom: 0, left: 0 }}>
               <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
@@ -711,11 +717,11 @@ function OperationalWaveform() {
 
 function CostMonitoring() {
   return (
-    <Reveal className="glass overflow-hidden p-4">
+    <Reveal className="glass overflow-hidden p-2">
       <SectionHead label="COST MONITORING" sub="FinOps · live spend" />
-      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+      <div className="flex gap-3 overflow-x-auto">
         {costCards.map((card) => (
-          <div key={card.label} className="kpi-card">
+          <div key={card.label} className="kpi-card px-3 py-2 min-w-[140px]">
             <span className="kpi-label">{card.label}</span>
             <span className="kpi-value">{card.value}</span>
             <span className={cx("kpi-delta", card.tone)}>{card.delta}</span>
@@ -1115,83 +1121,40 @@ function HumanReviewQueue() {
   }
 
   return (
-    <Reveal className="glass overflow-hidden p-4">
+    <Reveal className="glass overflow-hidden p-3">
       <SectionHead label="HUMAN APPROVAL CENTER" sub="High-risk review queue" />
-      <div className="mb-3 grid gap-2 sm:grid-cols-2">
-        {(["Awaiting Review", "Approved", "Rejected", "Escalated", "Timed Out"] as ApprovalState[]).map((state) => (
-          <div key={state} className="kpi-card">
-            <span className="kpi-label">{state}</span>
-            <span className="kpi-value">{approvals.filter((row) => row.state === state).length}</span>
-          </div>
-        ))}
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="flex items-center gap-3">
+          <div className="rounded-full bg-amber/20 px-3 py-1 text-[0.8rem] font-semibold text-amber">{pendingApprovals.length} Pending</div>
+          <div className="text-[0.72rem] text-muted">Operational review queue</div>
+        </div>
+        <div className="flex items-center gap-2">
+          {(["Awaiting Review", "Approved", "Rejected", "Escalated"] as ApprovalState[]).map((s) => (
+            <div key={s} className="kpi-card px-2 py-1 text-[0.68rem]">{s}: {approvals.filter((r) => r.state === s).length}</div>
+          ))}
+        </div>
       </div>
-      <div className="max-h-[320px] space-y-3 overflow-y-auto scrollbar-mini">
-        {visibleApprovals.map((approval) => {
-          const payload = createEmailPayload(approval);
-          return (
-            <div key={approval.id} className="glass overflow-hidden border border-white/10 p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2 text-[0.65rem] uppercase tracking-[0.18em] text-amber">
-                    <span>{approval.id}</span>
-                    <ApprovalBadge state={approval.state} />
-                    <EmailStatusPill status={approval.emailStatus} />
-                  </div>
-                  <div className="text-lg text-frost">{approval.incident}</div>
-                  <div className="grid gap-2 sm:grid-cols-2 text-[0.72rem] text-muted">
-                    <span>Severity: {approval.severity}</span>
-                    <span>AWS Account: {approval.account}</span>
-                    <span>Requested by: {approval.requestedBy}</span>
-                    <span>Reviewer: {approval.reviewer}</span>
-                    <span>Lock: {approval.lockState}</span>
-                    <span>Risk: {approval.pendingReason}</span>
-                  </div>
+
+      <div className="flex gap-3 overflow-x-auto py-1">
+        {visibleApprovals.map((approval) => (
+          <div key={approval.id} className="glass flex-shrink-0 w-[340px] border border-white/10 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-[0.65rem] uppercase tracking-[0.14em] text-amber">
+                  <span>{approval.id}</span>
+                  <ApprovalBadge state={approval.state} />
                 </div>
-                <div className="grid gap-2 sm:w-[240px]">
-                  <button
-                    onClick={() => markApproval(approval.id, "Approved")}
-                    className="w-full rounded-xl border border-emerald-300/35 bg-emerald-300/12 px-3 py-2 text-[0.7rem] uppercase tracking-[0.18em] text-emerald-200 hover:bg-emerald-300/18"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => markApproval(approval.id, "Rejected")}
-                    className="w-full rounded-xl border border-signal/35 bg-signal/12 px-3 py-2 text-[0.7rem] uppercase tracking-[0.18em] text-signal hover:bg-signal/18"
-                  >
-                    Reject
-                  </button>
-                  <button
-                    onClick={() => markApproval(approval.id, "Escalated")}
-                    className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[0.7rem] uppercase tracking-[0.18em] text-frost hover:border-amber/40 hover:text-amber"
-                  >
-                    Escalate
-                  </button>
-                  <button
-                    onClick={() => handleSendEmail(approval.id)}
-                    className="w-full rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-[0.7rem] uppercase tracking-[0.18em] text-muted hover:text-frost"
-                  >
-                    {approval.emailStatus === "pending" ? "Send Review Email" : approval.emailStatus === "sent" ? "Mark Viewed" : "Email Sent"}
-                  </button>
-                </div>
+                <div className="mt-1 text-sm font-semibold text-frost">{approval.incident}</div>
+                <div className="mt-1 text-[0.68rem] text-muted">{approval.account} · {approval.severity} · {approval.requested}</div>
               </div>
-              <div className="mt-3 grid gap-2 rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem] text-muted">
-                <div className="flex items-center gap-2 text-[0.6rem] uppercase tracking-[0.18em] text-amber">
-                  <MailCheck size={12} /> Approval Email Scaffold
-                </div>
-                <div className="grid gap-1 sm:grid-cols-2">
-                  <div>
-                    <div className="text-[0.56rem] uppercase tracking-[0.2em] text-muted">Subject</div>
-                    <div className="text-frost">{payload.subject}</div>
-                  </div>
-                  <div>
-                    <div className="text-[0.56rem] uppercase tracking-[0.2em] text-muted">Provider Ready For</div>
-                    <div className="text-frost">{payload.providerHints.join(" · ")}</div>
-                  </div>
-                </div>
+              <div className="flex flex-col gap-2 w-[110px]">
+                <button onClick={() => markApproval(approval.id, "Approved")} className="rounded-md border border-emerald-300/30 bg-emerald-300/10 px-2 py-1 text-[0.68rem] text-emerald-200">Approve</button>
+                <button onClick={() => markApproval(approval.id, "Rejected")} className="rounded-md border border-signal/30 bg-signal/10 px-2 py-1 text-[0.68rem] text-signal">Reject</button>
+                <button onClick={() => markApproval(approval.id, "Escalated")} className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[0.68rem] text-frost">Escalate</button>
               </div>
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
     </Reveal>
   );
@@ -1305,7 +1268,7 @@ function PerformanceIndex() {
       <div className="grid gap-3 items-center lg:grid-cols-[220px_1fr_260px]">
         {/* LEFT: compact gauge */}
         <div className="flex flex-col items-center justify-center rounded-2xl border border-white/10 bg-black/25 p-2">
-          <div className="relative h-32 w-32">
+          <div className="relative h-32 w-32 min-h-[128px]">
             <ResponsiveContainer width="100%" height="100%">
               <RadialBarChart innerRadius="68%" outerRadius="100%" data={[{ name: "score", value: overallScore, fill: "#ff3b30" }]} startAngle={90} endAngle={-270}>
                 <RadialBar dataKey="value" background={{ fill: "rgba(255,255,255,0.06)" }} cornerRadius={6} />
@@ -1442,7 +1405,7 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
             </div>
             <div className="max-h-[300px] space-y-2 overflow-y-auto p-3 scrollbar-mini">
               {messages.map((message, index) => (
-                <div key={index} className={cx("border p-2 text-[0.7rem]", message.role === "supervisor" ? "ml-6 border-amber/30 bg-amber/8" : "mr-3 border-white/10 bg-black/35")}> 
+                <div key={`message-${index}-${message.role}`} className={cx("border p-2 text-[0.7rem]", message.role === "supervisor" ? "ml-6 border-amber/30 bg-amber/8" : "mr-3 border-white/10 bg-black/35")}>
                   <div className="mb-1 text-[0.55rem] uppercase tracking-[0.18em] text-muted">{message.role}</div>
                   <div className="leading-5 text-frost/88">{message.text}</div>
                   <div className="mt-1.5 border-l border-signal/40 pl-2 text-[0.55rem] uppercase tracking-[0.14em] text-muted">{message.meta}</div>
@@ -1507,13 +1470,18 @@ export function ChandraExperience() {
 
       <section className="section-shell">
         <div className="section-inner grid gap-3 lg:grid-cols-12">
+          <div className="lg:col-span-12"><CostMonitoring /></div>
+        </div>
+      </section>
+
+      <section className="section-shell">
+        <div className="section-inner grid gap-3 lg:grid-cols-12">
           <div className="lg:col-span-7 space-y-3">
             <OperationalWaveform />
-            <CostMonitoring />
+            {pendingApprovals.length > 0 ? <HumanReviewQueue /> : null}
           </div>
           <div className="lg:col-span-5 space-y-3">
             <LiveOpsStream events={events} />
-            {pendingApprovals.length > 0 ? <HumanReviewQueue /> : null}
           </div>
         </div>
       </section>
