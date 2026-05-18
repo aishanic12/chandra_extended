@@ -73,8 +73,7 @@ body::after {
 
 .section-shell {
   position: relative;
-  min-height: 100vh;
-  padding: clamp(5rem, 9vw, 9rem) clamp(1.25rem, 4vw, 4.5rem);
+  padding: clamp(2.25rem, 3.6vw, 3.5rem) clamp(1.25rem, 3vw, 3rem);
   border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
@@ -84,16 +83,97 @@ body::after {
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(90deg, rgba(255, 59, 59, 0.08), transparent 34%),
-    radial-gradient(circle at 82% 24%, rgba(255, 179, 71, 0.08), transparent 28rem);
-  opacity: 0.72;
+    linear-gradient(90deg, rgba(255, 59, 59, 0.06), transparent 34%),
+    radial-gradient(circle at 82% 24%, rgba(255, 179, 71, 0.06), transparent 26rem);
+  opacity: 0.65;
 }
 
 .section-inner {
   position: relative;
   z-index: 1;
-  width: min(1280px, 100%);
+  width: min(1480px, 100%);
   margin: 0 auto;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  padding-bottom: 0.65rem;
+}
+
+.section-head .section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.28em;
+  color: var(--amber);
+}
+
+.section-head .section-label::before {
+  content: "";
+  height: 1px;
+  width: 1.6rem;
+  background: var(--signal);
+}
+
+.section-head .section-sub {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: #928a80;
+}
+
+.kpi-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(8, 8, 10, 0.55);
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.kpi-card .kpi-label {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: #928a80;
+}
+
+.kpi-card .kpi-value {
+  font-size: 1.45rem;
+  color: var(--frost);
+  line-height: 1.1;
+}
+
+.kpi-card .kpi-delta {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+.scrollbar-mini::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollbar-mini::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 3px;
+}
+
+.scrollbar-mini::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.feed-stream {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
 }
 
 .glass {
