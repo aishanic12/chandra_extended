@@ -37,8 +37,8 @@ import {
   YAxis
 } from "recharts";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
-import { useOnboarding } from "@/store/OnboardingContext";
+#import { useRouter } from "next/navigation";
+#import { useOnboarding } from "@/store/OnboardingContext";
 
 type Severity = "P1" | "P2" | "P3" | "P4";
 type IncidentStatus = "Resolved" | "Investigating" | "Escalated" | "Monitoring" | "Awaiting Approval";
