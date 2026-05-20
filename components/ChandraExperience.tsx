@@ -37,6 +37,8 @@ import {
   YAxis
 } from "recharts";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useOnboarding } from "@/store/OnboardingContext";
 
 type Severity = "P1" | "P2" | "P3" | "P4";
 type IncidentStatus = "Resolved" | "Investigating" | "Escalated" | "Monitoring" | "Awaiting Approval";
@@ -668,6 +670,7 @@ function CommandHeader() {
             </div>
           </div>
         </Reveal>
+        <LiveAlertsBar />
         <Reveal className="glass relative overflow-hidden p-4">
           <div className="grid gap-3 md:grid-cols-4 lg:grid-cols-8">
             {[
@@ -688,6 +691,47 @@ function CommandHeader() {
         </Reveal>
       </div>
     </section>
+  );
+}
+
+function LiveAlertsBar() {
+  const alerts = [
+    { id: "alert-1", severity: "P1", text: "High CPU usage detected in EC2 cluster", time: "2m ago" },
+    { id: "alert-2", severity: "P2", text: "Deployment rollback triggered in us-east-1", time: "6m ago" },
+    { id: "alert-3", severity: "P1", text: "Memory threshold exceeded on production node", time: "11m ago" },
+    { id: "alert-4", severity: "P3", text: "Unusual traffic spike detected", time: "18m ago" }
+  ];
+
+  const tone = {
+    P1: "text-signal",
+    P2: "text-amber",
+    P3: "text-frost/70",
+    P4: "text-frost/70"
+  } as const;
+
+  return (
+    <Reveal className="glass overflow-hidden p-4 mb-4">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-[0.65rem] uppercase tracking-[0.22em] text-muted">LIVE ALERTS</div>
+          <div className="mt-2 text-sm text-frost/70">Urgent operational alerts prioritized for review.</div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-[0.68rem] uppercase tracking-[0.18em] text-muted">
+          {alerts.length} active alerts
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {alerts.map((alert) => (
+          <div key={alert.id} className="rounded-3xl border border-white/10 bg-black/25 p-3">
+            <div className="flex items-center justify-between gap-3 text-[0.7rem] uppercase tracking-[0.16em] text-muted">
+              <span className={tone[alert.severity]}>{alert.severity}</span>
+              <span>{alert.time}</span>
+            </div>
+            <div className="mt-3 text-sm text-frost">{alert.text}</div>
+          </div>
+        ))}
+      </div>
+    </Reveal>
   );
 }
 
@@ -889,57 +933,76 @@ function LiveOpsStream({ events }: { events: OpsEvent[] }) {
   );
 }
 
-function KRAGovernance() {
+function KRAMetricsReview({ selectedKRAs }: { selectedKRAs: string[] }) {
+  const reviewMap: Record<string, { subtitle: string; value: string; detail: string; tone: string }> = {
+    "Infrastructure Monitoring": {
+      subtitle: "Infrastructure Health",
+      value: "72% CPU",
+      detail: "Fleet utilization and uptime are stable.",
+      tone: "text-emerald-300"
+    },
+    "Incident Detection": {
+      subtitle: "Incident Detection",
+      value: "5 active alerts",
+      detail: "Priority incidents are surfaced in real time.",
+      tone: "text-signal"
+    },
+    "Cost Optimization": {
+      subtitle: "Cost Optimization",
+      value: "$182K saved",
+      detail: "FinOps recommendations are active.",
+      tone: "text-amber"
+    },
+    "Deployment Intelligence": {
+      subtitle: "Deployment Intelligence",
+      value: "98.6% success",
+      detail: "Release stability tracking is online.",
+      tone: "text-frost"
+    },
+    "Audit & Compliance": {
+      subtitle: "Audit & Compliance",
+      value: "95.4% coverage",
+      detail: "Evidence and controls remain aligned.",
+      tone: "text-frost"
+    }
+  };
+
+  const selected = selectedKRAs.filter((kra) => reviewMap[kra]);
+
+  if (!selected.length) return null;
+
   return (
     <section className="section-shell">
       <div className="section-inner">
-        <SectionHead label="KRA PERFORMANCE REVIEW" sub="Digital Cloud Engineer / AI FTE evaluation" />
+        <SectionHead label="SELECTED KRA SUMMARY" sub="Capability-driven operational review" />
         <Reveal>
           <div className="grid gap-3 lg:grid-cols-2">
-            {kraReviewData.map((kra) => (
-              <div key={kra.id} className="glass border border-white/10 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">{kra.id}</div>
-                    <div className="mt-2 text-base font-semibold uppercase tracking-[0.04em] text-frost">{kra.title}</div>
+            {selected.map((kra) => {
+              const item = reviewMap[kra];
+              return (
+                <div key={kra} className="glass border border-white/10 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">{kra}</div>
+                      <div className="mt-2 text-base font-semibold uppercase tracking-[0.04em] text-frost">{item.subtitle}</div>
+                    </div>
+                    <div className={`rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[0.65rem] uppercase tracking-[0.16em] ${item.tone}`}>
+                      Active
+                    </div>
                   </div>
-                  <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[0.65rem] uppercase tracking-[0.16em] text-emerald-300">
-                    {kra.rating}
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem]">
+                      <div className="uppercase tracking-[0.16em] text-muted">Metric</div>
+                      <div className="mt-1 text-frost">{item.value}</div>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem] sm:col-span-2">
+                      <div className="uppercase tracking-[0.16em] text-muted">Insight</div>
+                      <div className="mt-1 text-frost">{item.detail}</div>
+                    </div>
                   </div>
                 </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                  <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem]">
-                    <div className="uppercase tracking-[0.16em] text-muted">Target</div>
-                    <div className="mt-1 text-frost">{kra.target}</div>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem]">
-                    <div className="uppercase tracking-[0.16em] text-muted">Actual</div>
-                    <div className="mt-1 text-frost">{kra.actual}</div>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem]">
-                    <div className="uppercase tracking-[0.16em] text-muted">Operational Score</div>
-                    <div className="mt-1 text-frost">{kra.score}</div>
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-2 text-[0.72rem]">
-                  <div className="flex items-center justify-between text-muted uppercase tracking-[0.16em]">
-                    <span>Confidence</span>
-                    <span>{kra.confidence}%</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                    <motion.div className="h-full rounded-full bg-emerald-300" animate={{ width: `${kra.confidence}%` }} transition={{ duration: 0.8 }} />
-                  </div>
-                  <div className="flex items-center justify-between text-muted uppercase tracking-[0.16em]">
-                    <span>Automation</span>
-                    <span>{kra.automation}%</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                    <motion.div className="h-full rounded-full bg-signal" animate={{ width: `${kra.automation}%` }} transition={{ duration: 0.8 }} />
-                  </div>
-                  <div className="text-[0.7rem] text-frost">Impact: {kra.impact}</div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Reveal>
       </div>
@@ -1261,6 +1324,71 @@ function AuditLogs() {
   );
 }
 
+function InfrastructureHealth() {
+  return (
+    <Reveal className="glass overflow-hidden p-4">
+      <SectionHead label="INFRASTRUCTURE HEALTH" sub="System uptime · EC2 metrics" />
+      <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+        <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
+          <div className="text-sm uppercase tracking-[0.18em] text-muted">EC2 Utilization</div>
+          <div className="mt-3 text-3xl font-semibold text-frost">72%</div>
+          <div className="mt-2 text-sm text-frost/70">Average CPU utilization across active worker instances.</div>
+        </div>
+        <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
+          <div className="text-sm uppercase tracking-[0.18em] text-muted">Uptime</div>
+          <div className="mt-3 text-3xl font-semibold text-frost">99.98%</div>
+          <div className="mt-2 text-sm text-frost/70">Cloud service availability with integrated automated health checks.</div>
+        </div>
+      </div>
+      <div className="mt-4 h-52 min-h-[208px] rounded-3xl border border-white/10 bg-black/20 p-3">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={trendData} margin={{ top: 10, right: 12, bottom: 8, left: 0 }}>
+            <defs>
+              <linearGradient id="cpuGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#8ed9a8" stopOpacity={0.65} />
+                <stop offset="100%" stopColor="#8ed9a8" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+            <XAxis dataKey="t" tick={{ fill: "#928a80", fontSize: 10 }} axisLine={false} tickLine={false} />
+            <YAxis hide />
+            <Tooltip contentStyle={{ background: "#0d0d0f", border: "1px solid rgba(255,255,255,0.14)", fontSize: 12 }} />
+            <Area type="monotone" dataKey="kra" stroke="#8ed9a8" fill="url(#cpuGradient)" strokeWidth={2} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </Reveal>
+  );
+}
+
+function DeploymentInsights() {
+  return (
+    <Reveal className="glass overflow-hidden p-4">
+      <SectionHead label="DEPLOYMENT INTELLIGENCE" sub="Release stability · rollback readiness" />
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
+          <div className="text-sm uppercase tracking-[0.18em] text-muted">Release Success</div>
+          <div className="mt-3 text-3xl font-semibold text-frost">98.6%</div>
+          <div className="mt-2 text-sm text-frost/70">Stable deployment completion across the last 15 windows.</div>
+        </div>
+        <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
+          <div className="text-sm uppercase tracking-[0.18em] text-muted">Rollback Alerts</div>
+          <div className="mt-3 text-3xl font-semibold text-frost">2</div>
+          <div className="mt-2 text-sm text-frost/70">Deployments flagged for rollback review by the AI worker.</div>
+        </div>
+      </div>
+      <div className="mt-4 rounded-3xl border border-white/10 bg-black/20 p-4 text-sm text-frost/70">
+        <div className="mb-3 uppercase tracking-[0.18em] text-muted">Recent deployment log</div>
+        <ul className="space-y-2">
+          <li>10:42 · Release pipeline passed all health gates.</li>
+          <li>11:08 · Canary rollout completed with no incidents.</li>
+          <li>12:15 · Auto-rollback signal set on latency spike.</li>
+        </ul>
+      </div>
+    </Reveal>
+  );
+}
+
 function PerformanceIndex() {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -1475,54 +1603,72 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
 }
 
 export function ChandraExperience() {
+  const { selectedKRAs } = useOnboarding();
   const events = useOperationalFeed();
-  const unread = useMemo(() => events.filter((e) => e.severity === "P1" || e.status === "Awaiting Approval" || e.status === "Escalated").length, [events]);
+  const unread = useMemo(
+    () => events.filter((e) => e.severity === "P1" || e.status === "Awaiting Approval" || e.status === "Escalated").length,
+    [events]
+  );
   const pendingApprovals = approvalSeed.filter((row) => row.state === "Awaiting Review" || row.state === "Escalated");
   const { agentName } = useOnboarding();
   const AGENT = agentName || "Chandra";
+
+  const hasInfra = selectedKRAs.includes("Infrastructure Monitoring");
+  const hasIncident = selectedKRAs.includes("Incident Detection");
+  const hasCost = selectedKRAs.includes("Cost Optimization");
+  const hasDeploy = selectedKRAs.includes("Deployment Intelligence");
+  const hasAudit = selectedKRAs.includes("Audit & Compliance");
 
   return (
     <main className="bg-obsidian text-frost">
       <CommandHeader />
 
-      <section className="section-shell">
-        <div className="section-inner grid gap-3 lg:grid-cols-12">
-          <div className="lg:col-span-12"><CostMonitoring /></div>
-        </div>
-      </section>
+      {hasCost ? (
+        <section className="section-shell">
+          <div className="section-inner grid gap-3 lg:grid-cols-12">
+            <div className="lg:col-span-12"><CostMonitoring /></div>
+          </div>
+        </section>
+      ) : null}
 
       <section className="section-shell">
         <div className="section-inner grid gap-3 lg:grid-cols-12">
           <div className="lg:col-span-7 space-y-3">
-            <OperationalWaveform />
-            {pendingApprovals.length > 0 ? <HumanReviewQueue /> : null}
+            {hasInfra ? <InfrastructureHealth /> : null}
+            {hasIncident ? <HumanReviewQueue /> : null}
           </div>
           <div className="lg:col-span-5 space-y-3">
-            <LiveOpsStream events={events} />
+            {hasIncident ? <LiveOpsStream events={events} /> : null}
+            {hasDeploy ? <DeploymentInsights /> : null}
           </div>
         </div>
       </section>
 
+      {hasIncident ? (
+        <section className="section-shell">
+          <div className="section-inner grid gap-3 lg:grid-cols-12">
+            <div className="lg:col-span-12"><ActiveIncidents /></div>
+          </div>
+        </section>
+      ) : null}
 
-      <section className="section-shell">
-        <div className="section-inner grid gap-3 lg:grid-cols-12">
-          <div className="lg:col-span-12"><ActiveIncidents /></div>
-        </div>
-      </section>
+      {(hasInfra || hasIncident || hasDeploy || hasAudit) ? (
+        <section className="section-shell">
+          <div className="section-inner">
+            <div className="w-full"><PerformanceIndex /></div>
+          </div>
+        </section>
+      ) : null}
 
-      <section className="section-shell">
-        <div className="section-inner">
-          <div className="w-full"><PerformanceIndex /></div>
-        </div>
-      </section>
+      <KRAMetricsReview selectedKRAs={selectedKRAs} />
 
-      <KRAGovernance />
-
-      <section className="section-shell">
-        <div className="section-inner grid gap-3 lg:grid-cols-12">
-          <div className="lg:col-span-12"><AuditLogs /></div>
-        </div>
-      </section>
+      {hasAudit ? (
+        <section className="section-shell">
+          <div className="section-inner grid gap-3 lg:grid-cols-12">
+            <div className="lg:col-span-12"><AuditLogs /></div>
+          </div>
+        </section>
+      ) : null}
 
       <section className="px-5 py-8 md:px-10">
         <div className="mx-auto max-w-[1480px] border-t border-white/10 pt-6">

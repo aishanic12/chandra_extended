@@ -6,7 +6,7 @@ import Providers from "@/app/providers";
 export const metadata: Metadata = {
   title: "Chandra | L3 Digital Cloud Engineer",
   description:
-    "A cinematic operational intelligence demo for Chandra, an L3 human-supervised AI Digital Worker."
+    "A clean enterprise onboarding experience for a premium AI workforce dashboard."
 };
 
 export default function RootLayout({
