@@ -34,7 +34,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [agentName, setAgentName] = useState<string>("");
   const [role, setRole] = useState<string>("AWS Cloud Engineer");
   const [maturity, setMaturity] = useState<string>("L2");
-  const [selectedKRAs, setSelectedKRAs] = useState<string[]>(["Infrastructure Monitoring", "Incident Detection"]);
+  const [selectedKRAs, setSelectedKRAs] = useState<string[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {

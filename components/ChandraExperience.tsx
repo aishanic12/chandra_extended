@@ -38,7 +38,6 @@ import {
 } from "recharts";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 
-
 type Severity = "P1" | "P2" | "P3" | "P4";
 type IncidentStatus = "Resolved" | "Investigating" | "Escalated" | "Monitoring" | "Awaiting Approval";
 type ApprovalState = "Awaiting Review" | "Approved" | "Rejected" | "Escalated" | "Timed Out";
@@ -642,15 +641,16 @@ function CommandHeader() {
           <div className="flex items-center gap-3">
             <RadioTower size={14} className="text-signal" />
             <span>{AGENT}</span>
-            <span className="text-amber">Enterprise Ops</span>
-            <span className="text-frost/70">Human-supervised workflow enforced</span>
+            <span className="text-amber">AWS Cloud Operations</span>
+            <span className="text-frost/70">Premium operational command center</span>
           </div>
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={() => router.push("/onboarding")}
-              className="rounded-full border border-white/10 bg-signal/10 px-3 py-2 text-[0.65rem] uppercase tracking-[0.2em] text-signal transition hover:bg-signal/15"
+              className="rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-[0.65rem] text-frost transition hover:border-emerald-300/40 hover:bg-black/40"
             >
-              Create Digital Employee
+              Edit deployment choices
             </button>
             <div className="flex items-center gap-2 border border-emerald-300/35 bg-emerald-300/10 px-3 py-1.5 text-[0.6rem] uppercase tracking-[0.22em] text-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 pulse-core" />
@@ -662,10 +662,7 @@ function CommandHeader() {
           <div className="mb-2 flex flex-wrap items-end justify-between gap-4">
             <div>
               <h1 className="display text-5xl uppercase leading-[0.85] text-frost md:text-6xl">{AGENT}</h1>
-            </div>
-            <div className="grid gap-2 rounded-2xl border border-white/10 bg-black/50 p-4 text-[0.68rem] uppercase tracking-[0.18em] text-muted">
-              <span className="text-amber">AI pause enforced for P1 / IAM / destructive / compliance-sensitive</span>
-              <span className="text-frost">Supervisor approval required before hazardous remediation.</span>
+              <p className="mt-3 max-w-2xl text-base text-frost/70">A premium operations dashboard tailored to your selected capability modules.</p>
             </div>
           </div>
         </Reveal>
@@ -694,7 +691,7 @@ function CommandHeader() {
 }
 
 function LiveAlertsBar() {
-  const alerts = [
+  const alerts: Array<{ id: string; severity: Severity; text: string; time: string }> = [
     { id: "alert-1", severity: "P1", text: "High CPU usage detected in EC2 cluster", time: "2m ago" },
     { id: "alert-2", severity: "P2", text: "Deployment rollback triggered in us-east-1", time: "6m ago" },
     { id: "alert-3", severity: "P1", text: "Memory threshold exceeded on production node", time: "11m ago" },
@@ -1630,18 +1627,20 @@ export function ChandraExperience() {
         </section>
       ) : null}
 
-      <section className="section-shell">
-        <div className="section-inner grid gap-3 lg:grid-cols-12">
-          <div className="lg:col-span-7 space-y-3">
-            {hasInfra ? <InfrastructureHealth /> : null}
-            {hasIncident ? <HumanReviewQueue /> : null}
+      {(hasInfra || hasIncident || hasDeploy) ? (
+        <section className="section-shell">
+          <div className="section-inner grid gap-3 lg:grid-cols-12">
+            <div className="lg:col-span-7 space-y-3">
+              {hasInfra ? <InfrastructureHealth /> : null}
+              {hasIncident ? <HumanReviewQueue /> : null}
+            </div>
+            <div className="lg:col-span-5 space-y-3">
+              {hasIncident ? <LiveOpsStream events={events} /> : null}
+              {hasDeploy ? <DeploymentInsights /> : null}
+            </div>
           </div>
-          <div className="lg:col-span-5 space-y-3">
-            {hasIncident ? <LiveOpsStream events={events} /> : null}
-            {hasDeploy ? <DeploymentInsights /> : null}
-          </div>
-        </div>
-      </section>
+        </section>
+      ) : null}
 
       {hasIncident ? (
         <section className="section-shell">
