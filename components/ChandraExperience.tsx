@@ -1,6 +1,8 @@
 "use client";
 
+import { useOnboarding } from "@/store/OnboardingContext";
 import { AnimatePresence, motion } from "framer-motion";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   Bot,
@@ -550,12 +552,13 @@ function cx(...classes: Array<string | false | null | undefined>) {
 }
 
 function ClientTime({ offset = 0 }: { offset?: number }) {
-  const [time, setTime] = useState(() => nowTime(offset));
+  const [time, setTime] = useState("");
   useEffect(() => {
+    setTime(nowTime(offset));
     const t = window.setInterval(() => setTime(nowTime(offset)), 1000);
     return () => window.clearInterval(t);
   }, [offset]);
-  return <>{time}</>;
+  return <>{time || "--:--:--"}</>;
 }
 
 function Reveal({ children, className = "" }: { children: ReactNode; className?: string }) {
@@ -627,25 +630,37 @@ function EmailStatusPill({ status }: { status: EmailStatus }) {
 }
 
 function CommandHeader() {
+  const router = useRouter();
+  const { agentName } = useOnboarding();
+  const AGENT = agentName || "Chandra";
+
   return (
     <section className="relative px-5 pt-10 pb-6 md:px-10 md:pt-12">
       <div className="mx-auto max-w-[1480px]">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-[0.65rem] uppercase tracking-[0.28em] text-muted">
           <div className="flex items-center gap-3">
             <RadioTower size={14} className="text-signal" />
-            <span>Chandra</span>
+            <span>{AGENT}</span>
             <span className="text-amber">Enterprise Ops</span>
             <span className="text-frost/70">Human-supervised workflow enforced</span>
           </div>
-          <div className="flex items-center gap-2 border border-emerald-300/35 bg-emerald-300/10 px-3 py-1.5 text-[0.6rem] uppercase tracking-[0.22em] text-emerald-200">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 pulse-core" />
-            Operating Status: Active
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => router.push("/onboarding")}
+              className="rounded-full border border-white/10 bg-signal/10 px-3 py-2 text-[0.65rem] uppercase tracking-[0.2em] text-signal transition hover:bg-signal/15"
+            >
+              Create Digital Employee
+            </button>
+            <div className="flex items-center gap-2 border border-emerald-300/35 bg-emerald-300/10 px-3 py-1.5 text-[0.6rem] uppercase tracking-[0.22em] text-emerald-200">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 pulse-core" />
+              Operating Status: Active
+            </div>
           </div>
         </div>
         <Reveal>
           <div className="mb-2 flex flex-wrap items-end justify-between gap-4">
             <div>
-              <h1 className="display text-5xl uppercase leading-[0.85] text-frost md:text-6xl">Chandra</h1>
+              <h1 className="display text-5xl uppercase leading-[0.85] text-frost md:text-6xl">{AGENT}</h1>
             </div>
             <div className="grid gap-2 rounded-2xl border border-white/10 bg-black/50 p-4 text-[0.68rem] uppercase tracking-[0.18em] text-muted">
               <span className="text-amber">AI pause enforced for P1 / IAM / destructive / compliance-sensitive</span>
@@ -1463,6 +1478,8 @@ export function ChandraExperience() {
   const events = useOperationalFeed();
   const unread = useMemo(() => events.filter((e) => e.severity === "P1" || e.status === "Awaiting Approval" || e.status === "Escalated").length, [events]);
   const pendingApprovals = approvalSeed.filter((row) => row.state === "Awaiting Review" || row.state === "Escalated");
+  const { agentName } = useOnboarding();
+  const AGENT = agentName || "Chandra";
 
   return (
     <main className="bg-obsidian text-frost">
@@ -1510,11 +1527,11 @@ export function ChandraExperience() {
       <section className="px-5 py-8 md:px-10">
         <div className="mx-auto max-w-[1480px] border-t border-white/10 pt-6">
           <div className="flex flex-wrap items-center justify-between gap-3 text-[0.6rem] uppercase tracking-[0.24em] text-muted">
-            <div className="flex items-center gap-2">
-              <ShieldCheck size={13} className="text-emerald-300" />
-              Observable · Accountable · Supervised
-            </div>
-            <div>Chandra · Enterprise AI Workforce System · L3 Human-Supervised</div>
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={13} className="text-emerald-300" />
+                Observable · Accountable · Supervised
+              </div>
+              <div>{AGENT} · Enterprise AI Workforce System · L3 Human-Supervised</div>
           </div>
         </div>
       </section>
