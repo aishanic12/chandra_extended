@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { useOnboarding } from "@/store/OnboardingContext";
+import { normalizeKraName, predefinedKraCatalog } from "@/store/kraCatalog";
 
 const roles = [
   "AWS Cloud Engineer",
@@ -16,20 +17,25 @@ const roles = [
 
 const maturities = ["L1", "L2", "L3", "L4"];
 
-const defaultKRAs = [
-  { id: "Infrastructure Monitoring", desc: "Proactively monitor infrastructure and surface anomalies." },
-  { id: "Incident Detection", desc: "Detect incidents with high confidence and triage autonomously." },
-  { id: "Cost Optimization", desc: "Identify cost anomalies and recommend rightsizing." },
-  { id: "Deployment Intelligence", desc: "Automate safe deployment flows with guardrails." },
-  { id: "Audit & Compliance", desc: "Preserve evidence and enforce policy controls." }
-];
-
 export default function OnboardingWizard() {
   const router = useRouter();
-  const { agentName, setAgentName, role, setRole, maturity, setMaturity, selectedKRAs, toggleKRA } = useOnboarding();
+  const {
+    agentName,
+    setAgentName,
+    role,
+    setRole,
+    maturity,
+    setMaturity,
+    selectedKRAs,
+    customKras,
+    toggleKRA,
+    addCustomKRA,
+    removeCustomKRA
+  } = useOnboarding();
   const [step, setStep] = useState(0);
   const [localName, setLocalName] = useState(agentName || "");
   const [deployStage, setDeployStage] = useState<number>(0);
+  const [customKraInput, setCustomKraInput] = useState("");
 
   useEffect(() => {
     setLocalName(agentName);
@@ -55,6 +61,16 @@ export default function OnboardingWizard() {
 
   function prev() {
     setStep((s) => Math.max(s - 1, 0));
+  }
+
+  function addCustomKrasFromInput() {
+    const entries = customKraInput
+      .split(/[\n,]+/)
+      .map((entry) => normalizeKraName(entry))
+      .filter(Boolean);
+
+    entries.forEach((entry) => addCustomKRA(entry));
+    if (entries.length) setCustomKraInput("");
   }
 
   function runDeploymentSequence() {
@@ -170,7 +186,7 @@ export default function OnboardingWizard() {
               <h3 className="text-2xl font-semibold">Select capability modules</h3>
               <p className="text-muted mt-2">Choose the KRAs that will shape your operational dashboard.</p>
               <div className="mt-6 grid gap-4 md:grid-cols-2">
-                {defaultKRAs.map((kra) => (
+                {predefinedKraCatalog.map((kra) => (
                   <label key={kra.id} className="flex cursor-pointer items-start gap-4 rounded-3xl border border-white/10 bg-black/30 p-5 transition hover:border-emerald-300/20">
                     <input
                       type="checkbox"
@@ -184,6 +200,48 @@ export default function OnboardingWizard() {
                     </div>
                   </label>
                 ))}
+              </div>
+              <div className="mt-4 rounded-3xl border border-white/10 bg-black/30 p-5">
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <input
+                    value={customKraInput}
+                    onChange={(event) => setCustomKraInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        addCustomKrasFromInput();
+                      }
+                    }}
+                    placeholder="Add custom KRA..."
+                    className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-frost outline-none transition placeholder:text-muted focus:border-emerald-300/40 focus:ring-2 focus:ring-emerald-300/15"
+                  />
+                  <button
+                    type="button"
+                    onClick={addCustomKrasFromInput}
+                    disabled={!customKraInput.trim()}
+                    className="rounded-2xl border border-white/10 bg-emerald-300/10 px-5 py-3 text-sm font-semibold text-emerald-200 transition hover:border-emerald-300/30 disabled:opacity-50"
+                  >
+                    Add
+                  </button>
+                </div>
+                {customKras.length > 0 ? (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    {customKras.map((kra) => (
+                      <label key={kra} className="flex cursor-pointer items-start gap-4 rounded-3xl border border-white/10 bg-black/30 p-5 transition hover:border-emerald-300/20">
+                        <input
+                          type="checkbox"
+                          checked
+                          onChange={() => removeCustomKRA(kra)}
+                          className="mt-1 h-4 w-4 accent-emerald-300"
+                        />
+                        <div>
+                          <div className="font-semibold text-frost">{kra}</div>
+                          <div className="mt-2 text-sm text-frost/70">Custom operational KRA included in agent evaluation.</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <div className="mt-6 flex items-center gap-3">
                 <button onClick={prev} className="rounded-2xl border border-white/10 px-4 py-3 text-sm text-muted">Back</button>

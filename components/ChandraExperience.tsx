@@ -1,6 +1,7 @@
 "use client";
 
 import { useOnboarding } from "@/store/OnboardingContext";
+import { getKraMetric } from "@/store/kraCatalog";
 import { AnimatePresence, motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import {
@@ -930,40 +931,7 @@ function LiveOpsStream({ events }: { events: OpsEvent[] }) {
 }
 
 function KRAMetricsReview({ selectedKRAs }: { selectedKRAs: string[] }) {
-  const reviewMap: Record<string, { subtitle: string; value: string; detail: string; tone: string }> = {
-    "Infrastructure Monitoring": {
-      subtitle: "Infrastructure Health",
-      value: "72% CPU",
-      detail: "Fleet utilization and uptime are stable.",
-      tone: "text-emerald-300"
-    },
-    "Incident Detection": {
-      subtitle: "Incident Detection",
-      value: "5 active alerts",
-      detail: "Priority incidents are surfaced in real time.",
-      tone: "text-signal"
-    },
-    "Cost Optimization": {
-      subtitle: "Cost Optimization",
-      value: "$182K saved",
-      detail: "FinOps recommendations are active.",
-      tone: "text-amber"
-    },
-    "Deployment Intelligence": {
-      subtitle: "Deployment Intelligence",
-      value: "98.6% success",
-      detail: "Release stability tracking is online.",
-      tone: "text-frost"
-    },
-    "Audit & Compliance": {
-      subtitle: "Audit & Compliance",
-      value: "95.4% coverage",
-      detail: "Evidence and controls remain aligned.",
-      tone: "text-frost"
-    }
-  };
-
-  const selected = selectedKRAs.filter((kra) => reviewMap[kra]);
+  const selected = selectedKRAs.map((kra) => ({ name: kra, metric: getKraMetric(kra) }));
 
   if (!selected.length) return null;
 
@@ -973,28 +941,40 @@ function KRAMetricsReview({ selectedKRAs }: { selectedKRAs: string[] }) {
         <SectionHead label="SELECTED KRA SUMMARY" sub="Capability-driven operational review" />
         <Reveal>
           <div className="grid gap-3 lg:grid-cols-2">
-            {selected.map((kra) => {
-              const item = reviewMap[kra];
+            {selected.map(({ name, metric }) => {
               return (
-                <div key={kra} className="glass border border-white/10 p-4">
+                <div key={name} className="glass border border-white/10 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">{kra}</div>
-                      <div className="mt-2 text-base font-semibold uppercase tracking-[0.04em] text-frost">{item.subtitle}</div>
+                      <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">{name}</div>
+                      <div className="mt-2 text-base font-semibold uppercase tracking-[0.04em] text-frost">{metric.subtitle}</div>
                     </div>
-                    <div className={`rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[0.65rem] uppercase tracking-[0.16em] ${item.tone}`}>
+                    <div className={`rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[0.65rem] uppercase tracking-[0.16em] ${metric.tone}`}>
                       Active
                     </div>
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-3">
                     <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem]">
                       <div className="uppercase tracking-[0.16em] text-muted">Metric</div>
-                      <div className="mt-1 text-frost">{item.value}</div>
+                      <div className="mt-1 text-frost">{metric.value}</div>
                     </div>
                     <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem] sm:col-span-2">
                       <div className="uppercase tracking-[0.16em] text-muted">Insight</div>
-                      <div className="mt-1 text-frost">{item.detail}</div>
+                      <div className="mt-1 text-frost">{metric.detail}</div>
                     </div>
+                  </div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-4">
+                    {[
+                      ["Target", metric.target],
+                      ["Actual", metric.actual],
+                      ["Confidence", `${metric.confidence}%`],
+                      ["Automation", `${metric.automation}%`]
+                    ].map(([label, value]) => (
+                      <div key={`${name}-${label}`} className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.68rem]">
+                        <div className="uppercase tracking-[0.16em] text-muted">{label}</div>
+                        <div className="mt-1 text-frost">{value}</div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               );
@@ -1599,14 +1579,13 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
 }
 
 export function ChandraExperience() {
-  const { selectedKRAs } = useOnboarding();
+  const { selectedKRAs, agentName } = useOnboarding();
   const events = useOperationalFeed();
   const unread = useMemo(
     () => events.filter((e) => e.severity === "P1" || e.status === "Awaiting Approval" || e.status === "Escalated").length,
     [events]
   );
   const pendingApprovals = approvalSeed.filter((row) => row.state === "Awaiting Review" || row.state === "Escalated");
-  const { agentName } = useOnboarding();
   const AGENT = agentName || "Chandra";
 
   const hasInfra = selectedKRAs.includes("Infrastructure Monitoring");
@@ -1614,6 +1593,7 @@ export function ChandraExperience() {
   const hasCost = selectedKRAs.includes("Cost Optimization");
   const hasDeploy = selectedKRAs.includes("Deployment Intelligence");
   const hasAudit = selectedKRAs.includes("Audit & Compliance");
+  const hasSelectedKras = selectedKRAs.length > 0;
 
   return (
     <main className="bg-obsidian text-frost">
@@ -1650,7 +1630,7 @@ export function ChandraExperience() {
         </section>
       ) : null}
 
-      {(hasInfra || hasIncident || hasDeploy || hasAudit) ? (
+      {(hasInfra || hasIncident || hasDeploy || hasAudit || hasSelectedKras) ? (
         <section className="section-shell">
           <div className="section-inner">
             <div className="w-full"><PerformanceIndex /></div>
