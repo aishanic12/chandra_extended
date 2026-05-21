@@ -89,7 +89,7 @@ export default function OnboardingWizard() {
       setDeployStage(index);
       if (index >= stages.length) {
         window.clearInterval(timer);
-        setTimeout(() => router.push("/"), 700);
+        setTimeout(() => router.push("/dashboard"), 700);
       }
     }, 900);
   }
@@ -117,7 +117,7 @@ export default function OnboardingWizard() {
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-frost/75">Initializing identity for <span className="font-semibold text-frost">{localName.toUpperCase()}</span></div>
                 ) : null}
                 <div className="flex items-center gap-3">
-                  <button onClick={() => router.push("/")} className="rounded-2xl border border-white/10 px-4 py-3 text-sm text-muted">Cancel</button>
+                  <button onClick={() => router.push("/dashboard")} className="rounded-2xl border border-white/10 px-4 py-3 text-sm text-muted">Cancel</button>
                   <button onClick={next} disabled={!canNext} className="ml-auto rounded-2xl bg-emerald-300/10 px-5 py-3 text-sm font-semibold text-emerald-200 disabled:opacity-50">Continue</button>
                 </div>
               </div>
