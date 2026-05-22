@@ -1,6 +1,7 @@
 "use client";
 
 import { useOnboarding } from "@/store/OnboardingContext";
+import { getAvatarById, getAvatarImageSrc, type AgentAvatar } from "@/store/agentProfile";
 import { getKraMetric } from "@/store/kraCatalog";
 import { AnimatePresence, motion } from "framer-motion";
 import { useRouter } from "next/navigation";
@@ -630,10 +631,27 @@ function EmailStatusPill({ status }: { status: EmailStatus }) {
   return <span className={cx("inline-flex items-center border px-2 py-0.5 text-[0.55rem] uppercase tracking-[0.18em]", tone)}>{status}</span>;
 }
 
+function AgentAvatarMark({ avatar, size = 80 }: { avatar: AgentAvatar; size?: number }) {
+  return (
+    <div
+      className="avatar-portrait shrink-0"
+      style={{
+        width: size,
+        height: size,
+        borderColor: "rgba(142,217,168,0.55)",
+        boxShadow: "0 0 34px rgba(142,217,168,0.16)"
+      }}
+    >
+      <img src={getAvatarImageSrc(avatar)} alt={avatar.label} draggable={false} />
+    </div>
+  );
+}
+
 function CommandHeader() {
   const router = useRouter();
-  const { agentName } = useOnboarding();
-  const AGENT = agentName || "Chandra";
+  const { agentName, avatarId, permissions } = useOnboarding();
+  const AGENT = (agentName || "Chandra").toUpperCase();
+  const avatar = getAvatarById(avatarId);
 
   return (
     <section className="relative px-5 pt-10 pb-6 md:px-10 md:pt-12">
@@ -642,56 +660,56 @@ function CommandHeader() {
           <div className="flex items-center gap-3">
             <RadioTower size={14} className="text-signal" />
             <span>{AGENT}</span>
-            <span className="text-amber">AWS Cloud Operations</span>
-            <span className="text-frost/70">Premium operational command center</span>
+            <span className="text-amber">AWS CLOUD OPERATIONS</span>
+            <span className="text-frost/70">PREMIUM OPERATIONAL COMMAND CENTER</span>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => router.push("/onboarding")}
-              className="rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-[0.65rem] text-frost transition hover:border-emerald-300/40 hover:bg-black/40"
+              className="rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-[0.65rem] uppercase tracking-[0.18em] text-frost transition hover:border-emerald-300/40 hover:bg-black/40"
             >
-              Edit deployment choices
+              EDIT DEPLOYMENT CHOICES
             </button>
             <div className="flex items-center gap-2 border border-emerald-300/35 bg-emerald-300/10 px-3 py-1.5 text-[0.6rem] uppercase tracking-[0.22em] text-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 pulse-core" />
-              Operating Status: Active
+              OPERATING STATUS: ACTIVE
+            </div>
+            <div className="flex items-center gap-3 rounded-2xl border border-signal/30 bg-black/45 px-3 py-1.5 shadow-[0_0_24px_rgba(255,59,59,0.16)] backdrop-blur">
+              <AgentAvatarMark avatar={avatar} size={36} />
+              <span className="text-sm font-semibold uppercase tracking-[0.08em] text-frost leading-tight">{AGENT}</span>
             </div>
           </div>
         </div>
         <Reveal>
-          <div className="mb-2 flex flex-wrap items-end justify-between gap-4">
-            <div>
+          <div className="mb-4 grid gap-4 lg:grid-cols-[1fr_520px] lg:items-end">
+            <div className="flex items-center gap-4">
+              <AgentAvatarMark avatar={avatar} size={80} />
               <h1 className="display text-5xl uppercase leading-[0.85] text-frost md:text-6xl">{AGENT}</h1>
-              <p className="mt-3 max-w-2xl text-base text-frost/70">A premium operations dashboard tailored to your selected capability modules.</p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-5">
+              {[
+                ["14", "REGIONS"],
+                ["47", "ACCOUNTS"],
+                ["6", "INCIDENT LOAD"],
+                ["Active", "STATUS"],
+                ["99.98%", "UPTIME"]
+              ].map(([value, label]) => (
+                <div key={label} className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2">
+                  <div className="text-base text-frost">{value}</div>
+                  <div className="mt-1 text-[0.54rem] uppercase tracking-[0.16em] text-muted">{label}</div>
+                </div>
+              ))}
             </div>
           </div>
         </Reveal>
-        <LiveAlertsBar />
-        <Reveal className="glass relative overflow-hidden p-4">
-          <div className="grid gap-3 md:grid-cols-4 lg:grid-cols-8">
-            {[
-              ["47", "Accounts"],
-              ["14", "AWS Regions"],
-              ["6", "Active Incidents"],
-              ["99.98%", "Worker Uptime"],
-              ["5m 42s", "Median MTTR"],
-              ["68", "Workflows"],
-              [<ClientTime key="client-time" />, "Last Action"]
-            ].map(([value, label], idx) => (
-              <div key={String(label) + idx} className="border-l border-white/12 pl-3">
-                <div className="text-lg text-frost">{value as any}</div>
-                <div className="mt-1 text-[0.56rem] uppercase tracking-[0.2em] text-muted">{label}</div>
-              </div>
-            ))}
-          </div>
-        </Reveal>
+        <OperationalIntelligencePanel permissionsCount={permissions.length} />
       </div>
     </section>
   );
 }
 
-function LiveAlertsBar() {
+function OperationalIntelligencePanel({ permissionsCount }: { permissionsCount: number }) {
   const alerts: Array<{ id: string; severity: Severity; text: string; time: string }> = [
     { id: "alert-1", severity: "P1", text: "High CPU usage detected in EC2 cluster", time: "2m ago" },
     { id: "alert-2", severity: "P2", text: "Deployment rollback triggered in us-east-1", time: "6m ago" },
@@ -706,27 +724,49 @@ function LiveAlertsBar() {
     P4: "text-frost/70"
   } as const;
 
+  const observations = [
+    ["Observation", "Release rollback correlated with elevated memory pressure."],
+    ["Recommended action", "Hold remediation until supervisor approval is captured."],
+    ["Security posture", `${permissionsCount || 0} governed access scopes active.`]
+  ];
+
   return (
     <Reveal className="glass overflow-hidden p-4 mb-4">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="text-[0.65rem] uppercase tracking-[0.22em] text-muted">LIVE ALERTS</div>
-          <div className="mt-2 text-sm text-frost/70">Urgent operational alerts prioritized for review.</div>
+          <div className="text-[0.65rem] uppercase tracking-[0.22em] text-muted">OPERATIONAL INTELLIGENCE</div>
+          <div className="mt-2 text-sm text-frost/70">Live alerts, observations, recommended actions, and security posture.</div>
         </div>
         <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-[0.68rem] uppercase tracking-[0.18em] text-muted">
-          {alerts.length} active alerts
+          {alerts.length} alerts - governed
         </div>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {alerts.map((alert) => (
-          <div key={alert.id} className="rounded-3xl border border-white/10 bg-black/25 p-3">
-            <div className="flex items-center justify-between gap-3 text-[0.7rem] uppercase tracking-[0.16em] text-muted">
-              <span className={tone[alert.severity]}>{alert.severity}</span>
-              <span>{alert.time}</span>
+      <div className="grid gap-3 lg:grid-cols-[1.35fr_1fr]">
+        <div className="grid gap-3 sm:grid-cols-2">
+          {alerts.map((alert) => (
+            <div key={alert.id} className="rounded-3xl border border-white/10 bg-black/25 p-3">
+              <div className="flex items-center justify-between gap-3 text-[0.7rem] uppercase tracking-[0.16em] text-muted">
+                <span className={tone[alert.severity]}>{alert.severity}</span>
+                <span>{alert.time}</span>
+              </div>
+              <div className="mt-3 text-sm text-frost">{alert.text}</div>
             </div>
-            <div className="mt-3 text-sm text-frost">{alert.text}</div>
+          ))}
+        </div>
+        <div className="grid gap-3">
+          {observations.map(([label, text]) => (
+            <div key={label} className="rounded-3xl border border-white/10 bg-black/25 p-3">
+              <div className="text-[0.62rem] uppercase tracking-[0.2em] text-amber">{label}</div>
+              <div className="mt-2 text-sm leading-5 text-frost/80">{text}</div>
+            </div>
+          ))}
+          <div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/8 p-3">
+            <div className="flex items-center gap-2 text-[0.62rem] uppercase tracking-[0.18em] text-emerald-300">
+              <ShieldCheck size={13} /> Security posture stable
+            </div>
+            <div className="mt-2 text-sm text-frost/75">No destructive action will execute without approval-state validation.</div>
           </div>
-        ))}
+        </div>
       </div>
     </Reveal>
   );
@@ -774,7 +814,7 @@ function OperationalWaveform() {
 function CostMonitoring() {
   return (
     <Reveal className="glass overflow-hidden p-2">
-      <SectionHead label="COST MONITORING" sub="FinOps · live spend" />
+      <SectionHead label="COST MONITORING" sub="FinOps - live spend" />
       <div className="flex gap-3 overflow-x-auto">
         {costCards.map((card) => (
           <div key={card.label} className="kpi-card px-3 py-2 min-w-[140px]">
@@ -1179,8 +1219,8 @@ function HumanReviewQueue() {
       <SectionHead label="HUMAN APPROVAL CENTER" sub="High-risk review queue" />
       <div className="flex items-center justify-between gap-3 mb-2">
         <div className="flex items-center gap-3">
-          <div className="rounded-full bg-amber/20 px-3 py-1 text-[0.8rem] font-semibold text-amber">{pendingApprovals.length} Pending</div>
-          <div className="text-[0.72rem] text-muted">Operational review queue</div>
+          <div className="rounded-full bg-amber/20 px-3 py-1 text-[0.8rem] font-semibold uppercase tracking-[0.08em] text-amber">{pendingApprovals.length} PENDING</div>
+          <div className="text-[0.72rem] uppercase tracking-[0.12em] text-muted">OPERATIONAL REVIEW QUEUE</div>
         </div>
         <div className="flex items-center gap-2">
           {(["Awaiting Review", "Approved", "Rejected", "Escalated"] as ApprovalState[]).map((s) => (
@@ -1306,12 +1346,12 @@ function InfrastructureHealth() {
       <SectionHead label="INFRASTRUCTURE HEALTH" sub="System uptime · EC2 metrics" />
       <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
         <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
-          <div className="text-sm uppercase tracking-[0.18em] text-muted">EC2 Utilization</div>
+          <div className="text-sm uppercase tracking-[0.18em] text-muted">EC2 UTILIZATION</div>
           <div className="mt-3 text-3xl font-semibold text-frost">72%</div>
           <div className="mt-2 text-sm text-frost/70">Average CPU utilization across active worker instances.</div>
         </div>
         <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
-          <div className="text-sm uppercase tracking-[0.18em] text-muted">Uptime</div>
+          <div className="text-sm uppercase tracking-[0.18em] text-muted">UPTIME</div>
           <div className="mt-3 text-3xl font-semibold text-frost">99.98%</div>
           <div className="mt-2 text-sm text-frost/70">Cloud service availability with integrated automated health checks.</div>
         </div>
@@ -1343,18 +1383,18 @@ function DeploymentInsights() {
       <SectionHead label="DEPLOYMENT INTELLIGENCE" sub="Release stability · rollback readiness" />
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
-          <div className="text-sm uppercase tracking-[0.18em] text-muted">Release Success</div>
+          <div className="text-sm uppercase tracking-[0.18em] text-muted">RELEASE SUCCESS</div>
           <div className="mt-3 text-3xl font-semibold text-frost">98.6%</div>
           <div className="mt-2 text-sm text-frost/70">Stable deployment completion across the last 15 windows.</div>
         </div>
         <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
-          <div className="text-sm uppercase tracking-[0.18em] text-muted">Rollback Alerts</div>
+          <div className="text-sm uppercase tracking-[0.18em] text-muted">ROLLBACK ALERTS</div>
           <div className="mt-3 text-3xl font-semibold text-frost">2</div>
           <div className="mt-2 text-sm text-frost/70">Deployments flagged for rollback review by the AI worker.</div>
         </div>
       </div>
       <div className="mt-4 rounded-3xl border border-white/10 bg-black/20 p-4 text-sm text-frost/70">
-        <div className="mb-3 uppercase tracking-[0.18em] text-muted">Recent deployment log</div>
+        <div className="mb-3 uppercase tracking-[0.18em] text-muted">RECENT DEPLOYMENT LOG</div>
         <ul className="space-y-2">
           <li>10:42 · Release pipeline passed all health gates.</li>
           <li>11:08 · Canary rollout completed with no incidents.</li>
@@ -1397,7 +1437,7 @@ function PerformanceIndex() {
               <motion.div key={overallScore} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-3xl font-semibold text-frost">
                 {overallScore}
               </motion.div>
-              <div className="text-[0.6rem] uppercase tracking-[0.18em] text-muted">FTE Score</div>
+              <div className="text-[0.6rem] uppercase tracking-[0.18em] text-muted">FTE SCORE</div>
             </div>
           </div>
           <div className="mt-2 text-[0.68rem] text-amber uppercase tracking-[0.14em]">{descriptor}</div>
@@ -1407,21 +1447,21 @@ function PerformanceIndex() {
         <div className="px-2">
           <div className="flex items-center justify-between">
             <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">Formula</div>
-            <div className="text-[0.72rem] text-muted">Compact weighted scoring</div>
+            <div className="text-[0.72rem] uppercase tracking-[0.14em] text-muted">COMPACT WEIGHTED SCORING</div>
           </div>
           <div className="mt-2 rounded-2xl border border-white/10 bg-black/25 p-2 text-sm text-frost">
             <div className="font-mono text-sm">{formula}</div>
             <div className="mt-2 grid grid-cols-3 gap-2 text-[0.72rem] text-muted">
               <div>
-                <div className="uppercase text-[0.62rem] text-muted">Weighted sum</div>
+                <div className="uppercase text-[0.62rem] text-muted">WEIGHTED SUM</div>
                 <div className="text-frost">{Math.round(weightedRaw)}</div>
               </div>
               <div>
-                <div className="uppercase text-[0.62rem] text-muted">Gov factor</div>
+                <div className="uppercase text-[0.62rem] text-muted">GOV FACTOR</div>
                 <div className="text-frost">0.96</div>
               </div>
               <div>
-                <div className="uppercase text-[0.62rem] text-muted">AI bonus</div>
+                <div className="uppercase text-[0.62rem] text-muted">AI BONUS</div>
                 <div className="text-frost">+4</div>
               </div>
             </div>
@@ -1599,20 +1639,18 @@ export function ChandraExperience() {
     <main className="bg-obsidian text-frost">
       <CommandHeader />
 
-      {hasCost ? (
-        <section className="section-shell">
-          <div className="section-inner grid gap-3 lg:grid-cols-12">
-            <div className="lg:col-span-12"><CostMonitoring /></div>
-          </div>
-        </section>
-      ) : null}
+      <section className="section-shell">
+        <div className="section-inner grid gap-3 lg:grid-cols-12">
+          <div className={`lg:col-span-7 ${hasCost ? "" : "opacity-60"}`}><CostMonitoring /></div>
+          <div className="lg:col-span-5"><HumanReviewQueue /></div>
+        </div>
+      </section>
 
       {(hasInfra || hasIncident || hasDeploy) ? (
         <section className="section-shell">
           <div className="section-inner grid gap-3 lg:grid-cols-12">
             <div className="lg:col-span-7 space-y-3">
               {hasInfra ? <InfrastructureHealth /> : null}
-              {hasIncident ? <HumanReviewQueue /> : null}
             </div>
             <div className="lg:col-span-5 space-y-3">
               {hasIncident ? <LiveOpsStream events={events} /> : null}

@@ -7,6 +7,9 @@ const nextConfig = {
   trailingSlash: true,
   basePath: pagesPath,
   assetPrefix: pagesPath,
+  env: {
+    NEXT_PUBLIC_BASE_PATH: pagesPath
+  },
   images: {
     unoptimized: true
   }

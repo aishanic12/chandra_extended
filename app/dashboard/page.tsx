@@ -1,27 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChandraExperience } from "@/components/ChandraExperience";
 import { useOnboarding } from "@/store/OnboardingContext";
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { agentName } = useOnboarding();
-  const [mounted, setMounted] = useState(false);
+  const { hydrated, onboardingCompleted, agentName } = useOnboarding();
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (!mounted) return;
-    if (!agentName) {
+    if (!hydrated) return;
+    if (!onboardingCompleted || !agentName) {
       router.replace("/onboarding");
     }
-  }, [agentName, mounted, router]);
+  }, [hydrated, onboardingCompleted, agentName, router]);
 
-  if (!mounted || !agentName) {
+  if (!hydrated || !onboardingCompleted || !agentName) {
     return null;
   }
 

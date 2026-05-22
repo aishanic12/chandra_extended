@@ -31,6 +31,18 @@ body {
     linear-gradient(180deg, #050505 0%, #09090b 42%, #050505 100%);
   color: var(--frost);
   font-family: var(--font-mono), "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  text-transform: uppercase;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  text-transform: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+  text-transform: uppercase;
 }
 
 body::before {
@@ -254,6 +266,203 @@ body::after {
   }
   to {
     transform: translateX(-33.333%);
+  }
+}
+
+.maturity-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 179, 71, 0.28);
+  animation: maturityPulse 3.6s ease-in-out infinite;
+}
+
+.maturity-ring.active {
+  border-color: rgba(142, 217, 168, 0.6);
+  box-shadow: 0 0 14px rgba(142, 217, 168, 0.18) inset;
+}
+
+@keyframes maturityPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.02);
+  }
+}
+
+.avatar-card {
+  position: relative;
+  transition: transform 0.32s ease, box-shadow 0.32s ease, border-color 0.32s ease;
+}
+
+.avatar-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 0%, rgba(142, 217, 168, 0.16), transparent 65%);
+  opacity: 0;
+  transition: opacity 0.32s ease;
+}
+
+.avatar-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 24px rgba(142, 217, 168, 0.12), 0 18px 40px rgba(0, 0, 0, 0.32);
+  border-color: rgba(142, 217, 168, 0.4);
+}
+
+.avatar-card:hover::after {
+  opacity: 1;
+}
+
+.avatar-card.selected {
+  border-color: rgba(142, 217, 168, 0.65);
+  box-shadow: 0 0 30px rgba(142, 217, 168, 0.22), 0 0 0 1px rgba(142, 217, 168, 0.3) inset;
+}
+
+.avatar-card.selected::after {
+  opacity: 1;
+}
+
+.avatar-portrait {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(255, 179, 71, 0.12), transparent 70%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.35));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.avatar-portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+.avatar-portrait::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border: 1px solid rgba(142, 217, 168, 0.22);
+  pointer-events: none;
+}
+
+.role-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.32s ease, filter 0.32s ease;
+  filter: drop-shadow(0 0 6px rgba(255, 179, 71, 0.22));
+}
+
+.role-card:hover .role-icon {
+  transform: scale(1.08);
+  filter: drop-shadow(0 0 10px rgba(142, 217, 168, 0.4));
+}
+
+.role-card {
+  transition: transform 0.32s ease, border-color 0.32s ease, box-shadow 0.32s ease;
+}
+
+.role-card:hover:not([disabled]) {
+  transform: translateY(-2px);
+  box-shadow: 0 0 24px rgba(142, 217, 168, 0.1), 0 18px 36px rgba(0, 0, 0, 0.3);
+}
+
+.role-icon-img {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
+  transition: filter 0.32s ease;
+}
+
+.role-card:hover .role-icon-img,
+.role-card[disabled] .role-icon-img {
+  filter: drop-shadow(0 0 6px rgba(255, 59, 59, 0.4));
+}
+
+.onboarding-shell {
+  position: relative;
+  isolation: isolate;
+}
+
+.onboarding-shell::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 16% 8%, rgba(255, 59, 59, 0.22), transparent 40%),
+    radial-gradient(circle at 88% 92%, rgba(255, 179, 71, 0.16), transparent 45%),
+    radial-gradient(circle at 50% 50%, rgba(255, 59, 59, 0.06), transparent 60%);
+  pointer-events: none;
+  z-index: -1;
+  filter: blur(2px);
+}
+
+.onboarding-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 59, 59, 0.05), transparent 30%);
+}
+
+.onboarding-ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(255, 59, 59, 0.22), transparent 38rem),
+    radial-gradient(circle at 82% 78%, rgba(255, 179, 71, 0.14), transparent 36rem),
+    radial-gradient(circle at 50% 12%, rgba(255, 59, 59, 0.08), transparent 30rem);
+  animation: ambientPulse 10s ease-in-out infinite;
+}
+
+@keyframes ambientPulse {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.telemetry-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.telemetry-shimmer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.04) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: telemetryShimmer 6.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes telemetryShimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  60%,
+  100% {
+    transform: translateX(120%);
   }
 }
 
