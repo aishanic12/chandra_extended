@@ -3,6 +3,22 @@
 import { useOnboarding } from "@/store/OnboardingContext";
 import { getAvatarById, getAvatarImageSrc, type AgentAvatar } from "@/store/agentProfile";
 import { getKraMetric } from "@/store/kraCatalog";
+import { fetchCostMetrics } from "@/services/api";
+import {
+  deriveApprovals,
+  deriveCostBreakdown,
+  deriveCostCards,
+  deriveIncidents,
+  deriveKraEvaluations,
+  deriveOpsEvents,
+  healthTone,
+  summarizeIssuesBySeverity,
+  type LiveApprovalRow,
+  type LiveCostCard,
+  type LiveIncident,
+  type LiveKraEvaluation,
+  type LiveOpsEvent
+} from "@/services/mapping";
 import { AnimatePresence, motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import {
@@ -647,11 +663,23 @@ function AgentAvatarMark({ avatar, size = 80 }: { avatar: AgentAvatar; size?: nu
   );
 }
 
-function CommandHeader() {
+function CommandHeader({
+  liveObservations,
+  liveSummary
+}: {
+  liveObservations: ReturnType<typeof useOnboarding>["observations"];
+  liveSummary: ReturnType<typeof summarizeIssuesBySeverity>;
+}) {
   const router = useRouter();
-  const { agentName, avatarId, permissions } = useOnboarding();
+  const { agentName, avatarId, permissions, observationsError } = useOnboarding();
   const AGENT = (agentName || "Chandra").toUpperCase();
   const avatar = getAvatarById(avatarId);
+  const health = liveObservations?.health ?? "Active";
+  const healthClass = healthTone(health);
+  const liveOpsForPanel = useMemo(
+    () => (liveObservations?.issues ? deriveOpsEvents(liveObservations.issues) : []),
+    [liveObservations]
+  );
 
   return (
     <section className="relative px-5 pt-10 pb-6 md:px-10 md:pt-12">
@@ -671,10 +699,15 @@ function CommandHeader() {
             >
               EDIT DEPLOYMENT CHOICES
             </button>
-            <div className="flex items-center gap-2 border border-emerald-300/35 bg-emerald-300/10 px-3 py-1.5 text-[0.6rem] uppercase tracking-[0.22em] text-emerald-200">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 pulse-core" />
-              OPERATING STATUS: ACTIVE
+            <div className={`flex items-center gap-2 border px-3 py-1.5 text-[0.6rem] uppercase tracking-[0.22em] ${healthClass} ${health.toUpperCase().includes("DEGRADED") ? "border-amber/35 bg-amber/10" : health.toUpperCase().includes("CRITICAL") || health.toUpperCase().includes("FAILED") ? "border-signal/35 bg-signal/10" : "border-emerald-300/35 bg-emerald-300/10"}`}>
+              <span className={`h-1.5 w-1.5 rounded-full pulse-core ${health.toUpperCase().includes("DEGRADED") ? "bg-amber" : health.toUpperCase().includes("CRITICAL") || health.toUpperCase().includes("FAILED") ? "bg-signal" : "bg-emerald-300"}`} />
+              OPERATING STATUS: {health.toUpperCase()}
             </div>
+            {observationsError ? (
+              <div className="flex items-center gap-2 border border-amber/40 bg-amber/10 px-3 py-1.5 text-[0.6rem] uppercase tracking-[0.22em] text-amber">
+                BACKEND FALLBACK
+              </div>
+            ) : null}
             <div className="flex items-center gap-3 rounded-2xl border border-signal/30 bg-black/45 px-3 py-1.5 shadow-[0_0_24px_rgba(255,59,59,0.16)] backdrop-blur">
               <AgentAvatarMark avatar={avatar} size={36} />
               <span className="text-sm font-semibold uppercase tracking-[0.08em] text-frost leading-tight">{AGENT}</span>
@@ -689,11 +722,11 @@ function CommandHeader() {
             </div>
             <div className="grid gap-2 sm:grid-cols-5">
               {[
-                ["14", "REGIONS"],
-                ["47", "ACCOUNTS"],
-                ["6", "INCIDENT LOAD"],
-                ["Active", "STATUS"],
-                ["99.98%", "UPTIME"]
+                [String(liveSummary.p1 || 0), "P1 ACTIVE"],
+                [String(liveSummary.total || 0), "OPEN ISSUES"],
+                [String(liveObservations?.actions?.length ?? 0), "PENDING ACTIONS"],
+                [health, "HEALTH"],
+                [String(liveObservations?.kra_status?.length ?? 0), "KRAS EVALUATED"]
               ].map(([value, label]) => (
                 <div key={label} className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2">
                   <div className="text-base text-frost">{value}</div>
@@ -703,19 +736,46 @@ function CommandHeader() {
             </div>
           </div>
         </Reveal>
-        <OperationalIntelligencePanel permissionsCount={permissions.length} />
+        <OperationalIntelligencePanel
+          permissionsCount={permissions.length}
+          liveEvents={liveOpsForPanel}
+          liveObservations={liveObservations?.observations}
+          liveSecurity={liveObservations?.security_posture}
+          liveCompliance={liveObservations?.compliance_summary}
+        />
       </div>
     </section>
   );
 }
 
-function OperationalIntelligencePanel({ permissionsCount }: { permissionsCount: number }) {
-  const alerts: Array<{ id: string; severity: Severity; text: string; time: string }> = [
+function OperationalIntelligencePanel({
+  permissionsCount,
+  liveEvents,
+  liveObservations,
+  liveSecurity,
+  liveCompliance
+}: {
+  permissionsCount: number;
+  liveEvents?: LiveOpsEvent[];
+  liveObservations?: string[];
+  liveSecurity?: string[];
+  liveCompliance?: string;
+}) {
+  const fallbackAlerts: Array<{ id: string; severity: Severity; text: string; time: string }> = [
     { id: "alert-1", severity: "P1", text: "High CPU usage detected in EC2 cluster", time: "2m ago" },
     { id: "alert-2", severity: "P2", text: "Deployment rollback triggered in us-east-1", time: "6m ago" },
     { id: "alert-3", severity: "P1", text: "Memory threshold exceeded on production node", time: "11m ago" },
     { id: "alert-4", severity: "P3", text: "Unusual traffic spike detected", time: "18m ago" }
   ];
+
+  const alerts = liveEvents && liveEvents.length
+    ? liveEvents.slice(0, 6).map((event) => ({
+        id: event.id,
+        severity: event.severity,
+        text: event.incident,
+        time: event.time
+      }))
+    : fallbackAlerts;
 
   const tone = {
     P1: "text-signal",
@@ -724,11 +784,21 @@ function OperationalIntelligencePanel({ permissionsCount }: { permissionsCount: 
     P4: "text-frost/70"
   } as const;
 
-  const observations = [
-    ["Observation", "Release rollback correlated with elevated memory pressure."],
-    ["Recommended action", "Hold remediation until supervisor approval is captured."],
-    ["Security posture", `${permissionsCount || 0} governed access scopes active.`]
-  ];
+  const liveObservationRows: Array<[string, string]> =
+    liveObservations && liveObservations.length
+      ? liveObservations.slice(0, 3).map((text, index) => [
+          index === 0 ? "Observation" : index === 1 ? "Telemetry signal" : "Operational note",
+          text
+        ])
+      : [
+          ["Observation", "Release rollback correlated with elevated memory pressure."],
+          ["Recommended action", "Hold remediation until supervisor approval is captured."],
+          ["Security posture", `${permissionsCount || 0} governed access scopes active.`]
+        ];
+
+  const observationRows = liveObservationRows;
+  const securityRows = liveSecurity && liveSecurity.length ? liveSecurity.slice(0, 3) : [];
+  const complianceText = liveCompliance && liveCompliance.length ? liveCompliance : `${permissionsCount || 0} governed access scopes active.`;
 
   return (
     <Reveal className="glass overflow-hidden p-4 mb-4">
@@ -754,17 +824,29 @@ function OperationalIntelligencePanel({ permissionsCount }: { permissionsCount: 
           ))}
         </div>
         <div className="grid gap-3">
-          {observations.map(([label, text]) => (
-            <div key={label} className="rounded-3xl border border-white/10 bg-black/25 p-3">
+          {observationRows.map(([label, text], index) => (
+            <div key={`${label}-${index}`} className="rounded-3xl border border-white/10 bg-black/25 p-3">
               <div className="text-[0.62rem] uppercase tracking-[0.2em] text-amber">{label}</div>
               <div className="mt-2 text-sm leading-5 text-frost/80">{text}</div>
             </div>
           ))}
+          {securityRows.length > 0 ? (
+            <div className="rounded-3xl border border-signal/25 bg-signal/8 p-3">
+              <div className="flex items-center gap-2 text-[0.62rem] uppercase tracking-[0.18em] text-signal">
+                <ShieldCheck size={13} /> Security findings
+              </div>
+              <ul className="mt-2 space-y-1 text-sm text-frost/85">
+                {securityRows.map((row, index) => (
+                  <li key={`security-${index}`} className="leading-5">{row}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/8 p-3">
             <div className="flex items-center gap-2 text-[0.62rem] uppercase tracking-[0.18em] text-emerald-300">
-              <ShieldCheck size={13} /> Security posture stable
+              <ShieldCheck size={13} /> Compliance posture
             </div>
-            <div className="mt-2 text-sm text-frost/75">No destructive action will execute without approval-state validation.</div>
+            <div className="mt-2 text-sm text-frost/85 leading-5">{complianceText}</div>
           </div>
         </div>
       </div>
@@ -811,25 +893,75 @@ function OperationalWaveform() {
   );
 }
 
-function CostMonitoring() {
+function CostMonitoring({
+  cards,
+  breakdown
+}: {
+  cards?: LiveCostCard[];
+  breakdown?: ReturnType<typeof deriveCostBreakdown>;
+}) {
+  const displayCards = cards && cards.length
+    ? cards.map((card) => ({ label: card.label, value: card.value, delta: card.delta, tone: card.tone, note: card.note }))
+    : costCards.map((card) => ({ ...card, note: "" }));
+
+  const regionRows = (breakdown?.regions ?? []).slice(0, 5);
+  const serviceRows = (breakdown?.services ?? []).slice(0, 5);
+  const hasBreakdown = Boolean(breakdown && (breakdown.regions.length || breakdown.services.length));
+  const sub = breakdown?.window
+    ? `FinOps · ${breakdown.window}`
+    : "FinOps - live spend";
+
   return (
     <Reveal className="glass overflow-hidden p-2">
-      <SectionHead label="COST MONITORING" sub="FinOps - live spend" />
+      <SectionHead label="COST MONITORING" sub={sub} />
       <div className="flex gap-3 overflow-x-auto">
-        {costCards.map((card) => (
-          <div key={card.label} className="kpi-card px-3 py-2 min-w-[140px]">
+        {displayCards.map((card) => (
+          <div key={card.label} className="kpi-card px-3 py-2 min-w-[160px]" title={card.note ?? ""}>
             <span className="kpi-label">{card.label}</span>
             <span className="kpi-value">{card.value}</span>
             <span className={cx("kpi-delta", card.tone)}>{card.delta}</span>
           </div>
         ))}
       </div>
+      {hasBreakdown ? (
+        <div className="mt-3 grid gap-3 md:grid-cols-2 px-1">
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <div className="text-[0.6rem] uppercase tracking-[0.18em] text-amber">REGION SPEND</div>
+            <ul className="mt-2 space-y-1 text-[0.72rem]">
+              {regionRows.map((row) => (
+                <li key={row.region} className="flex items-center justify-between border-b border-white/5 py-1 last:border-b-0">
+                  <span className="text-frost">{row.region}</span>
+                  <span className="text-frost/80">${row.total.toFixed(2)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <div className="text-[0.6rem] uppercase tracking-[0.18em] text-amber">TOP SERVICES</div>
+            <ul className="mt-2 space-y-1 text-[0.72rem]">
+              {serviceRows.map((row) => (
+                <li key={row.service} className="flex items-center justify-between border-b border-white/5 py-1 last:border-b-0">
+                  <span className="text-frost truncate pr-2" title={row.service}>{row.service}</span>
+                  <span className="text-frost/80">${row.total.toFixed(2)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      ) : null}
     </Reveal>
   );
 }
 
-function useOperationalFeed() {
-  const [events, setEvents] = useState<OpsEvent[]>(baseEvents);
+function useOperationalFeed(seed?: OpsEvent[]) {
+  const initial = seed && seed.length ? seed : baseEvents;
+  const [events, setEvents] = useState<OpsEvent[]>(initial);
+
+  useEffect(() => {
+    if (seed && seed.length) {
+      setEvents(seed);
+    }
+  }, [seed]);
 
   useEffect(() => {
     const templates: OpsEvent[] = [
@@ -970,8 +1102,21 @@ function LiveOpsStream({ events }: { events: OpsEvent[] }) {
   );
 }
 
-function KRAMetricsReview({ selectedKRAs }: { selectedKRAs: string[] }) {
-  const selected = selectedKRAs.map((kra) => ({ name: kra, metric: getKraMetric(kra) }));
+function KRAMetricsReview({
+  selectedKRAs,
+  liveEvaluations
+}: {
+  selectedKRAs: string[];
+  liveEvaluations?: LiveKraEvaluation[];
+}) {
+  const evalByName = new Map<string, LiveKraEvaluation>();
+  (liveEvaluations ?? []).forEach((entry) => evalByName.set(entry.name, entry));
+
+  const selected = selectedKRAs.map((kra) => ({
+    name: kra,
+    metric: getKraMetric(kra),
+    live: evalByName.get(kra) ?? null
+  }));
 
   if (!selected.length) return null;
 
@@ -981,16 +1126,20 @@ function KRAMetricsReview({ selectedKRAs }: { selectedKRAs: string[] }) {
         <SectionHead label="SELECTED KRA SUMMARY" sub="Capability-driven operational review" />
         <Reveal>
           <div className="grid gap-3 lg:grid-cols-2">
-            {selected.map(({ name, metric }) => {
+            {selected.map(({ name, metric, live }) => {
+              const status = live?.status ?? "Active";
+              const statusTone = live ? live.tone : metric.tone;
+              const detail = live?.achievement ?? metric.detail;
+              const note = live?.note;
               return (
                 <div key={name} className="glass border border-white/10 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">{name}</div>
+                      <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">{live?.code ? `${live.code} · ${name}` : name}</div>
                       <div className="mt-2 text-base font-semibold uppercase tracking-[0.04em] text-frost">{metric.subtitle}</div>
                     </div>
-                    <div className={`rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[0.65rem] uppercase tracking-[0.16em] ${metric.tone}`}>
-                      Active
+                    <div className={`rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[0.65rem] uppercase tracking-[0.16em] ${statusTone}`}>
+                      {status}
                     </div>
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -1000,7 +1149,8 @@ function KRAMetricsReview({ selectedKRAs }: { selectedKRAs: string[] }) {
                     </div>
                     <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-[0.72rem] sm:col-span-2">
                       <div className="uppercase tracking-[0.16em] text-muted">Insight</div>
-                      <div className="mt-1 text-frost">{metric.detail}</div>
+                      <div className="mt-1 text-frost">{detail}</div>
+                      {note ? <div className="mt-2 text-[0.65rem] text-muted">{note}</div> : null}
                     </div>
                   </div>
                   <div className="mt-2 grid gap-2 sm:grid-cols-4">
@@ -1026,13 +1176,14 @@ function KRAMetricsReview({ selectedKRAs }: { selectedKRAs: string[] }) {
   );
 }
 
-function ActiveIncidents() {
+function ActiveIncidents({ source }: { source?: Incident[] }) {
   const [query, setQuery] = useState("");
   const [severity, setSeverity] = useState("All");
   const [status, setStatus] = useState("All");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const filtered = incidents.filter((incident) => {
+  const rows = source && source.length ? source : incidents;
+  const filtered = rows.filter((incident) => {
     const text = `${incident.incident} ${incident.account} ${incident.service} ${incident.rootCause}`.toLowerCase();
     return (
       text.includes(query.toLowerCase()) &&
@@ -1166,8 +1317,14 @@ function createEmailPayload(approval: ApprovalRow) {
   };
 }
 
-function HumanReviewQueue() {
-  const [approvals, setApprovals] = useState<ApprovalRow[]>(approvalSeed);
+function HumanReviewQueue({ seed }: { seed?: ApprovalRow[] }) {
+  const initialApprovals = seed && seed.length ? seed : approvalSeed;
+  const [approvals, setApprovals] = useState<ApprovalRow[]>(initialApprovals);
+  useEffect(() => {
+    if (seed && seed.length) {
+      setApprovals(seed);
+    }
+  }, [seed]);
   const pendingApprovals = approvals.filter((row) => row.state === "Awaiting Review" || row.state === "Escalated");
   const visibleApprovals = pendingApprovals.slice(0, 4);
 
@@ -1619,13 +1776,65 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
 }
 
 export function ChandraExperience() {
-  const { selectedKRAs, agentName } = useOnboarding();
-  const events = useOperationalFeed();
+  const {
+    selectedKRAs,
+    customKras,
+    agentName,
+    observations,
+    costMetrics,
+    setCostMetrics
+  } = useOnboarding();
+
+  useEffect(() => {
+    if (costMetrics) return;
+    const controller = new AbortController();
+    fetchCostMetrics({ signal: controller.signal })
+      .then((data) => setCostMetrics(data))
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : "Cost metrics request failed";
+        setCostMetrics(null, message);
+      });
+    return () => controller.abort();
+  }, [costMetrics, setCostMetrics]);
+
+  const liveEvents: LiveOpsEvent[] = useMemo(
+    () => (observations?.issues ? deriveOpsEvents(observations.issues) : []),
+    [observations]
+  );
+  const liveIncidents: LiveIncident[] = useMemo(() => deriveIncidents(liveEvents), [liveEvents]);
+  const liveApprovals: LiveApprovalRow[] = useMemo(
+    () => (observations?.actions ? deriveApprovals(observations.actions) : []),
+    [observations]
+  );
+  const liveCostCards = useMemo(
+    () => (observations?.cost_snapshot ? deriveCostCards(observations.cost_snapshot) : []),
+    [observations]
+  );
+  const liveKraEvaluations = useMemo(
+    () => (observations?.kra_status ? deriveKraEvaluations(observations.kra_status, customKras) : []),
+    [observations, customKras]
+  );
+  const costBreakdown = useMemo(() => deriveCostBreakdown(costMetrics ?? null), [costMetrics]);
+  const liveSummary = useMemo(() => summarizeIssuesBySeverity(liveEvents), [liveEvents]);
+
+  const eventsAsOpsEvent: OpsEvent[] = useMemo(
+    () => liveEvents.map((entry) => ({ ...entry })),
+    [liveEvents]
+  );
+  const incidentsAsIncident: Incident[] = useMemo(
+    () => liveIncidents.map((entry) => ({ ...entry })),
+    [liveIncidents]
+  );
+  const approvalsAsRow: ApprovalRow[] = useMemo(
+    () => liveApprovals.map((entry) => ({ ...entry })),
+    [liveApprovals]
+  );
+
+  const events = useOperationalFeed(eventsAsOpsEvent.length ? eventsAsOpsEvent : undefined);
   const unread = useMemo(
     () => events.filter((e) => e.severity === "P1" || e.status === "Awaiting Approval" || e.status === "Escalated").length,
     [events]
   );
-  const pendingApprovals = approvalSeed.filter((row) => row.state === "Awaiting Review" || row.state === "Escalated");
   const AGENT = agentName || "Chandra";
 
   const hasInfra = selectedKRAs.includes("Infrastructure Monitoring");
@@ -1637,12 +1846,14 @@ export function ChandraExperience() {
 
   return (
     <main className="bg-obsidian text-frost">
-      <CommandHeader />
+      <CommandHeader liveObservations={observations} liveSummary={liveSummary} />
 
       <section className="section-shell">
         <div className="section-inner grid gap-3 lg:grid-cols-12">
-          <div className={`lg:col-span-7 ${hasCost ? "" : "opacity-60"}`}><CostMonitoring /></div>
-          <div className="lg:col-span-5"><HumanReviewQueue /></div>
+          <div className={`lg:col-span-7 ${hasCost ? "" : "opacity-60"}`}>
+            <CostMonitoring cards={liveCostCards} breakdown={costBreakdown} />
+          </div>
+          <div className="lg:col-span-5"><HumanReviewQueue seed={approvalsAsRow} /></div>
         </div>
       </section>
 
@@ -1663,7 +1874,7 @@ export function ChandraExperience() {
       {hasIncident ? (
         <section className="section-shell">
           <div className="section-inner grid gap-3 lg:grid-cols-12">
-            <div className="lg:col-span-12"><ActiveIncidents /></div>
+            <div className="lg:col-span-12"><ActiveIncidents source={incidentsAsIncident} /></div>
           </div>
         </section>
       ) : null}
@@ -1676,7 +1887,7 @@ export function ChandraExperience() {
         </section>
       ) : null}
 
-      <KRAMetricsReview selectedKRAs={selectedKRAs} />
+      <KRAMetricsReview selectedKRAs={selectedKRAs} liveEvaluations={liveKraEvaluations} />
 
       {hasAudit ? (
         <section className="section-shell">

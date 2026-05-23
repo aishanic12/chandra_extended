@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
 import { generateEmployeeId, type AgentGender } from "./agentProfile";
 import { buildKraAgentPayload, buildSelectedKras, normalizeKraName, predefinedKraIds, type KraAgentPayload } from "./kraCatalog";
+import type { AgentObservation, CostMetricsOutput } from "@/services/api";
 
 export type OnboardingState = {
   agentName: string;
@@ -18,6 +19,10 @@ export type OnboardingState = {
   kraPayload: KraAgentPayload;
   onboardingCompleted: boolean;
   hydrated: boolean;
+  observations: AgentObservation | null;
+  observationsError: string | null;
+  costMetrics: CostMetricsOutput | null;
+  costMetricsError: string | null;
   setAgentName: (name: string) => void;
   setEmployeeId: (id: string) => void;
   setGender: (gender: AgentGender) => void;
@@ -28,6 +33,8 @@ export type OnboardingState = {
   toggleKRA: (kra: string) => void;
   addCustomKRA: (kra: string) => void;
   removeCustomKRA: (kra: string) => void;
+  setObservations: (data: AgentObservation | null, error?: string | null) => void;
+  setCostMetrics: (data: CostMetricsOutput | null, error?: string | null) => void;
   completeOnboarding: () => void;
   reset: () => void;
 };
@@ -46,6 +53,10 @@ const defaultState: OnboardingState = {
   kraPayload: { predefinedKras: [], customKras: [], selectedKras: [] },
   onboardingCompleted: false,
   hydrated: false,
+  observations: null,
+  observationsError: null,
+  costMetrics: null,
+  costMetricsError: null,
   setAgentName: () => {},
   setEmployeeId: () => {},
   setGender: () => {},
@@ -56,6 +67,8 @@ const defaultState: OnboardingState = {
   toggleKRA: () => {},
   addCustomKRA: () => {},
   removeCustomKRA: () => {},
+  setObservations: () => {},
+  setCostMetrics: () => {},
   completeOnboarding: () => {},
   reset: () => {}
 };
@@ -86,6 +99,10 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [predefinedKras, setPredefinedKras] = useState<string[]>([]);
   const [customKras, setCustomKras] = useState<string[]>([]);
   const [onboardingCompleted, setOnboardingCompleted] = useState<boolean>(false);
+  const [observations, setObservationsState] = useState<AgentObservation | null>(null);
+  const [observationsError, setObservationsError] = useState<string | null>(null);
+  const [costMetrics, setCostMetricsState] = useState<CostMetricsOutput | null>(null);
+  const [costMetricsError, setCostMetricsError] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const selectedKRAs = useMemo(() => buildSelectedKras(predefinedKras, customKras), [predefinedKras, customKras]);
   const kraPayload = useMemo(() => buildKraAgentPayload(predefinedKras, customKras), [predefinedKras, customKras]);
@@ -114,6 +131,8 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
         setCustomKras(parsed.selectedKRAs.filter((kra: string) => !predefinedKraIds.includes(kra)));
       }
       if (typeof parsed.onboardingCompleted === "boolean") setOnboardingCompleted(parsed.onboardingCompleted);
+      if (parsed.observations) setObservationsState(parsed.observations as AgentObservation);
+      if (parsed.costMetrics) setCostMetricsState(parsed.costMetrics as CostMetricsOutput);
     }
     try {
       window.localStorage.removeItem(STORAGE_KEY);
@@ -139,13 +158,15 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
           predefinedKras,
           customKras,
           selectedKRAs,
-          onboardingCompleted
+          onboardingCompleted,
+          observations,
+          costMetrics
         })
       );
     } catch {
       // ignore storage errors
     }
-  }, [agentName, employeeId, gender, avatarId, role, maturity, permissions, predefinedKras, customKras, selectedKRAs, onboardingCompleted, hydrated]);
+  }, [agentName, employeeId, gender, avatarId, role, maturity, permissions, predefinedKras, customKras, selectedKRAs, onboardingCompleted, observations, costMetrics, hydrated]);
 
   function toggleKRA(kra: string) {
     setPredefinedKras((current) => (current.includes(kra) ? current.filter((k) => k !== kra) : [...current, kra]));
@@ -172,6 +193,16 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     setOnboardingCompleted(true);
   }
 
+  function setObservations(data: AgentObservation | null, error: string | null = null) {
+    setObservationsState(data);
+    setObservationsError(error);
+  }
+
+  function setCostMetrics(data: CostMetricsOutput | null, error: string | null = null) {
+    setCostMetricsState(data);
+    setCostMetricsError(error);
+  }
+
   function reset() {
     setAgentName("");
     setEmployeeId("");
@@ -183,6 +214,10 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     setPredefinedKras([]);
     setCustomKras([]);
     setOnboardingCompleted(false);
+    setObservationsState(null);
+    setObservationsError(null);
+    setCostMetricsState(null);
+    setCostMetricsError(null);
     try {
       window.sessionStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -206,6 +241,10 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
         kraPayload,
         onboardingCompleted,
         hydrated,
+        observations,
+        observationsError,
+        costMetrics,
+        costMetricsError,
         setAgentName,
         setEmployeeId,
         setGender,
@@ -216,6 +255,8 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
         toggleKRA,
         addCustomKRA,
         removeCustomKRA,
+        setObservations,
+        setCostMetrics,
         completeOnboarding,
         reset
       }}

@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { KeyRound, ShieldCheck, Sparkles } from "lucide-react";
 import { useOnboarding } from "@/store/OnboardingContext";
+import { fetchAgentObservations } from "@/services/api";
+import { buildKraPayload } from "@/services/mapping";
 import {
   agentAvatars,
   agentGenders,
@@ -139,17 +141,22 @@ export default function OnboardingWizard() {
     permissions,
     togglePermission,
     selectedKRAs,
+    predefinedKras,
     customKras,
     toggleKRA,
     addCustomKRA,
     removeCustomKRA,
-    completeOnboarding
+    completeOnboarding,
+    setObservations
   } = useOnboarding();
   const [step, setStep] = useState(0);
   const [localName, setLocalName] = useState(agentName || "");
   const [deployStage, setDeployStage] = useState<number>(0);
   const [customKraInput, setCustomKraInput] = useState("");
   const [notice, setNotice] = useState("");
+  const [observationsStatus, setObservationsStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [observationsErrorMessage, setObservationsErrorMessage] = useState<string>("");
+  const submissionRef = useRef<AbortController | null>(null);
 
   const normalizedName = normalizeAgentName(localName);
   const duplicateName = normalizedName.length > 0 && isDuplicateAgentName(normalizedName);
@@ -215,18 +222,51 @@ export default function OnboardingWizard() {
   function runDeploymentSequence() {
     let index = 0;
     setDeployStage(0);
+    setObservationsStatus("loading");
+    setObservationsErrorMessage("");
+
+    const kraPayloadEntries = buildKraPayload(predefinedKras, customKras);
+    const region = "us-east-1";
+
+    submissionRef.current?.abort();
+    const controller = new AbortController();
+    submissionRef.current = controller;
+
+    const observationsPromise = fetchAgentObservations(
+      { region, kras: kraPayloadEntries },
+      { signal: controller.signal }
+    )
+      .then((data) => {
+        setObservations(data);
+        setObservationsStatus("success");
+        return data;
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : "Backend request failed";
+        setObservations(null, message);
+        setObservationsErrorMessage(message);
+        setObservationsStatus("error");
+        return null;
+      });
+
     const timer = window.setInterval(() => {
       index += 1;
       setDeployStage(index);
       if (index >= deploymentStages.length - 1) {
         window.clearInterval(timer);
-        setTimeout(() => {
+        observationsPromise.finally(() => {
           completeOnboarding();
           router.push("/dashboard");
-        }, 700);
+        });
       }
     }, 900);
   }
+
+  useEffect(() => {
+    return () => {
+      submissionRef.current?.abort();
+    };
+  }, []);
 
   return (
     <div className="relative min-h-screen bg-obsidian text-frost flex items-center justify-center p-6 overflow-hidden">
@@ -528,6 +568,19 @@ export default function OnboardingWizard() {
                   DEPLOYING {(agentName || localName).toUpperCase()}.
                 </h3>
                 <p className="text-muted mt-2">Provisioning intelligence and establishing governed operational access.</p>
+                <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-signal/30 bg-black/40 px-3 py-1 text-[0.6rem] uppercase tracking-[0.18em] text-signal">
+                  <span className={`h-1.5 w-1.5 rounded-full ${observationsStatus === "loading" ? "bg-signal pulse-core" : observationsStatus === "success" ? "bg-emerald-300" : observationsStatus === "error" ? "bg-amber" : "bg-muted"}`} />
+                  {observationsStatus === "loading"
+                    ? "STREAMING LANGGRAPH INTELLIGENCE..."
+                    : observationsStatus === "success"
+                    ? "OPERATIONAL INTELLIGENCE RECEIVED"
+                    : observationsStatus === "error"
+                    ? "BACKEND UNREACHABLE - USING FALLBACK"
+                    : "AWAITING BACKEND SYNC"}
+                </div>
+                {observationsStatus === "error" && observationsErrorMessage ? (
+                  <p className="mt-2 text-[0.7rem] text-amber/80">{observationsErrorMessage}</p>
+                ) : null}
                 <div className="mt-6 rounded-3xl border border-signal/20 bg-black/30 p-5 text-left shadow-[0_0_24px_rgba(255,59,59,0.08)]">
                   <div className="flex items-center gap-3">
                     <Sparkles size={16} className="text-signal" />
