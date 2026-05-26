@@ -1,4 +1,11 @@
-import type { AgentObservation, CostMetricsOutput, CostSnapshotItem, KraStatus } from "./api";
+import type {
+  ActionItem,
+  AgentObservation,
+  CostMetricsOutput,
+  CostSnapshotItem,
+  KraStatus,
+  LiveIssue
+} from "./api";
 import { predefinedKraCatalog } from "@/store/kraCatalog";
 
 export type Severity = "P1" | "P2" | "P3" | "P4";
@@ -19,6 +26,8 @@ export type LiveOpsEvent = {
   reviewer: string;
   lockState: string;
   escalation: string;
+  region: string;
+  resourceId: string;
 };
 
 export type LiveIncident = LiveOpsEvent & {
@@ -43,6 +52,8 @@ export type LiveApprovalRow = {
   lockState: string;
   emailStatus: "pending" | "sent" | "viewed" | "approved" | "rejected";
   pendingReason: string;
+  kraCode: string;
+  steps: string[];
 };
 
 export type LiveCostCard = {
@@ -86,6 +97,7 @@ export function formatKraCode(seq: number): string {
 }
 
 export function kraCodeToName(code: string, customKras: string[]): string {
+  if (!code) return "";
   const match = code.match(/KRA-0*(\d+)/i);
   if (!match) return code;
   const seq = parseInt(match[1], 10);
@@ -101,9 +113,9 @@ export function kraCodeToName(code: string, customKras: string[]): string {
 
 function statusTone(status: string): string {
   const upper = (status ?? "").toUpperCase();
-  if (upper.includes("RED")) return "text-signal";
-  if (upper.includes("YELLOW") || upper.includes("AMBER")) return "text-amber";
-  if (upper.includes("GREEN")) return "text-emerald-300";
+  if (upper.includes("RED") || upper.includes("CRITICAL") || upper.includes("FAIL")) return "text-signal";
+  if (upper.includes("YELLOW") || upper.includes("AMBER") || upper.includes("WARN")) return "text-amber";
+  if (upper.includes("GREEN") || upper.includes("STABLE") || upper.includes("HEALTHY")) return "text-emerald-300";
   return "text-frost";
 }
 
@@ -134,11 +146,25 @@ const SEVERITY_KEYWORDS: Array<{ pattern: RegExp; severity: Severity }> = [
   { pattern: /\b(spike|bottleneck|throttling|alarm|recon)\b/i, severity: "P3" }
 ];
 
-function inferSeverity(text: string): Severity {
+function normalizePriority(value: string | undefined): Severity | null {
+  if (!value) return null;
+  const upper = value.toString().toUpperCase().trim();
+  if (upper.includes("P1") || upper.includes("CRITICAL") || upper.includes("SEV1") || upper === "HIGH") return "P1";
+  if (upper.includes("P2") || upper.includes("SEV2") || upper === "MEDIUM") return "P2";
+  if (upper.includes("P3") || upper.includes("SEV3") || upper === "LOW") return "P3";
+  if (upper.includes("P4") || upper.includes("SEV4") || upper === "INFO") return "P4";
+  return null;
+}
+
+function inferSeverityFromText(text: string): Severity {
   for (const { pattern, severity } of SEVERITY_KEYWORDS) {
     if (pattern.test(text)) return severity;
   }
   return "P3";
+}
+
+export function resolveSeverity(priorityLevel: string | undefined, fallbackText: string): Severity {
+  return normalizePriority(priorityLevel) ?? inferSeverityFromText(fallbackText);
 }
 
 const SERVICE_KEYWORDS: Array<{ pattern: RegExp; service: string }> = [
@@ -162,18 +188,15 @@ function inferService(text: string): string {
   return "AWS";
 }
 
-const ACCOUNT_KEYWORDS: Array<{ pattern: RegExp; account: string }> = [
-  { pattern: /chandra-database|RDS/i, account: "Chandra-Data-Prod" },
-  { pattern: /chandra-synth-electric|S3/i, account: "Chandra-Storage-Prod" },
-  { pattern: /EC2|i-0/i, account: "Chandra-Compute-Prod" },
-  { pattern: /Bedrock|LLM/i, account: "Chandra-AI-Prod" },
-  { pattern: /Config|Compliance/i, account: "Chandra-Audit-Prod" }
-];
-
-function inferAccount(text: string): string {
-  for (const { pattern, account } of ACCOUNT_KEYWORDS) {
-    if (pattern.test(text)) return account;
-  }
+function accountFromResource(service: string, resourceId: string): string {
+  if (resourceId) return resourceId;
+  if (!service) return "Chandra-Operations";
+  const upper = service.toUpperCase();
+  if (upper.includes("RDS")) return "Chandra-Data-Prod";
+  if (upper.includes("S3")) return "Chandra-Storage-Prod";
+  if (upper.includes("EC2") || upper.includes("EBS")) return "Chandra-Compute-Prod";
+  if (upper.includes("BEDROCK") || upper.includes("LLM")) return "Chandra-AI-Prod";
+  if (upper.includes("IAM") || upper.includes("CONFIG")) return "Chandra-Audit-Prod";
   return "Chandra-Operations";
 }
 
@@ -186,25 +209,29 @@ function nowTime(offset = 0): string {
   });
 }
 
-export function deriveOpsEvents(issues: string[]): LiveOpsEvent[] {
+export function deriveOpsEvents(issues: LiveIssue[]): LiveOpsEvent[] {
   if (!issues?.length) return [];
   const baseTime = Date.now();
-  return issues.map((issue, index) => {
-    const severity = inferSeverity(issue);
+  return issues.map((entry, index) => {
+    const severity = resolveSeverity(entry.priorityLevel, entry.issue);
+    const service = entry.service && entry.service.length > 0 ? entry.service : inferService(entry.issue);
+    const account = accountFromResource(service, entry.resourceId);
     return {
       id: `live-evt-${index}`,
       time: nowTime(-index * 90_000),
       severity,
       status: severity === "P1" ? "Awaiting Approval" : "Investigating",
-      incident: issue,
-      service: inferService(issue),
-      account: inferAccount(issue),
+      incident: entry.issue,
+      service,
+      account,
       confidence: 86 + ((baseTime + index) % 11),
       resolution: "Auto-triage initiated; awaiting operator decision.",
       approvalState: "Awaiting Review",
       reviewer: "Pending operator review",
       lockState: "Remediation Paused",
-      escalation: severity === "P1" ? "Security owner" : "Operator review"
+      escalation: severity === "P1" ? "Security owner" : "Operator review",
+      region: entry.region,
+      resourceId: entry.resourceId
     };
   });
 }
@@ -220,12 +247,13 @@ export function deriveIncidents(events: LiveOpsEvent[]): LiveIncident[] {
   }));
 }
 
-export function deriveApprovals(
-  actions: { actionName: string; actionDescription: string; service: string }[]
-): LiveApprovalRow[] {
+export function deriveApprovals(actions: ActionItem[]): LiveApprovalRow[] {
   if (!actions?.length) return [];
   return actions.map((action, index) => {
-    const severity = inferSeverity(`${action.actionName} ${action.actionDescription}`);
+    const severity = resolveSeverity(
+      action.priorityLevel,
+      `${action.actionName} ${action.actionDescription}`
+    );
     return {
       id: `APV-${600 + index}`,
       incident: action.actionName,
@@ -240,7 +268,9 @@ export function deriveApprovals(
       requestedBy: "Chandra AI",
       lockState: "Remediation Paused",
       emailStatus: index === 0 ? "sent" : "pending",
-      pendingReason: action.actionName
+      pendingReason: action.actionName,
+      kraCode: action.kraCode,
+      steps: Array.isArray(action.steps) ? action.steps : []
     };
   });
 }
@@ -254,7 +284,6 @@ function costTone(changePct: number): string {
 
 function formatCurrency(value: number): string {
   if (value >= 1000) return `$${(value / 1000).toFixed(2)}K`;
-  if (value >= 1) return `$${value.toFixed(2)}`;
   return `$${value.toFixed(2)}`;
 }
 

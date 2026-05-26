@@ -44,13 +44,20 @@ const maturities = [
 ];
 
 const deploymentStages = [
-  "Initializing",
-  "Provisioning",
-  "Syncing",
-  "Preparing systems",
-  "Configuring workflows",
-  "Establishing governance"
+  "INITIALIZING AGENT",
+  "CONFIGURING KRAS",
+  "VALIDATING ACCESS LAYERS",
+  "RETRIEVING CLOUD TELEMETRY",
+  "ANALYZING OPERATIONAL INTELLIGENCE",
+  "SYNCHRONIZING SECURITY POSTURE",
+  "FINALIZING DEPLOYMENT"
 ];
+
+const deploymentTargets = [10, 24, 38, 55, 80, 92, 100];
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function AvatarPortrait({
   avatar,
@@ -152,11 +159,13 @@ export default function OnboardingWizard() {
   const [step, setStep] = useState(0);
   const [localName, setLocalName] = useState(agentName || "");
   const [deployStage, setDeployStage] = useState<number>(0);
+  const [deployProgress, setDeployProgress] = useState<number>(0);
   const [customKraInput, setCustomKraInput] = useState("");
   const [notice, setNotice] = useState("");
   const [observationsStatus, setObservationsStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [observationsErrorMessage, setObservationsErrorMessage] = useState<string>("");
   const submissionRef = useRef<AbortController | null>(null);
+  const deploymentStartedRef = useRef(false);
 
   const normalizedName = normalizeAgentName(localName);
   const duplicateName = normalizedName.length > 0 && isDuplicateAgentName(normalizedName);
@@ -164,13 +173,13 @@ export default function OnboardingWizard() {
   const hasSelectedAvatar = Boolean(avatarId);
   const hasName = Boolean(normalizedName || agentName);
   const selectedAvatar = hasSelectedAvatar ? getAvatarById(avatarId) : null;
-  const progress = Math.round((deployStage / (deploymentStages.length - 1)) * 100);
+  const progress = deployProgress;
   const displayName = (agentName || normalizedName || "").toUpperCase();
   const currentAgentId = agentName ? employeeId || employeeIdPreview : employeeIdPreview;
   const showProfilePill = hasSelectedAvatar && hasName;
 
   useEffect(() => {
-    setLocalName(agentName);
+    setLocalName((current) => (current === agentName ? current : agentName));
   }, [agentName]);
 
   useEffect(() => {
@@ -198,6 +207,8 @@ export default function OnboardingWizard() {
       setEmployeeId(employeeIdPreview);
     }
     if (step === 4) {
+      if (deploymentStartedRef.current) return;
+      deploymentStartedRef.current = true;
       setStep(5);
       runDeploymentSequence();
       return;
@@ -219,47 +230,120 @@ export default function OnboardingWizard() {
     if (entries.length) setCustomKraInput("");
   }
 
-  function runDeploymentSequence() {
-    let index = 0;
+  async function animateProgressTo(target: number, signal: AbortSignal) {
+    setDeployProgress((current) => Math.min(current, target));
+    while (!signal.aborted) {
+      let finished = false;
+      setDeployProgress((current) => {
+        if (current >= target) {
+          finished = true;
+          return current;
+        }
+        const distance = target - current;
+        return Math.min(target, current + Math.max(1, Math.ceil(distance / 8)));
+      });
+      if (finished) return;
+      await wait(130);
+    }
+  }
+
+  async function runDeploymentSequence() {
     setDeployStage(0);
+    setDeployProgress(0);
     setObservationsStatus("loading");
     setObservationsErrorMessage("");
+    setObservations(null, null);
 
     const kraPayloadEntries = buildKraPayload(predefinedKras, customKras);
-    const region = "us-east-1";
+    const payload = {
+      region: "us-east-1",
+      kras: kraPayloadEntries,
+      selected_kras: selectedKRAs,
+      custom_kras: customKras,
+      maturity_level: maturity,
+      deployment: {
+        role,
+        permissions,
+        agent_name: agentName || normalizedName,
+        employee_id: employeeId || employeeIdPreview
+      }
+    };
 
     submissionRef.current?.abort();
     const controller = new AbortController();
     submissionRef.current = controller;
 
-    const observationsPromise = fetchAgentObservations(
-      { region, kras: kraPayloadEntries },
-      { signal: controller.signal }
-    )
-      .then((data) => {
+    try {
+      for (let stageIndex = 0; stageIndex < 3; stageIndex += 1) {
+        if (controller.signal.aborted) return;
+        setDeployStage(stageIndex);
+        await animateProgressTo(deploymentTargets[stageIndex], controller.signal);
+        await wait(220);
+      }
+
+      setDeployStage(3);
+      await animateProgressTo(deploymentTargets[3], controller.signal);
+
+      let data = null;
+      let attempt = 0;
+      const maxAttempts = 5;
+      
+      while (!data && !controller.signal.aborted && attempt < maxAttempts) {
+        attempt += 1;
+        console.log(`DEPLOYMENT ATTEMPT ${attempt}/${maxAttempts}`, payload);
+        setObservationsStatus("loading");
+        setObservationsErrorMessage(attempt > 1 ? `Live backend still initializing. Retrying telemetry request ${attempt}/${maxAttempts}.` : "");
+        try {
+          data = await fetchAgentObservations(payload, { signal: controller.signal });
+          console.log("OBS RESPONSE SUCCESS", data);
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          const message = error instanceof Error ? error.message : "Backend request failed";
+          console.error(`OBS RESPONSE ERROR (Attempt ${attempt})`, message);
+          setObservationsErrorMessage(`${message}. Waiting for live operational response.`);
+          if (attempt < maxAttempts) {
+            await wait(Math.min(10_000, 1_500 * attempt));
+          }
+        }
+      }
+      
+      if (controller.signal.aborted) return;
+
+      if (!data) {
+        console.warn("MAX ATTEMPTS REACHED - PROCEEDING TO DASHBOARD WITH FALLBACK");
+        setObservationsErrorMessage("Maximum attempts reached. Dashboard will continue trying in background.");
+      }
+
+      setDeployStage(4);
+      await animateProgressTo(deploymentTargets[4], controller.signal);
+      await wait(220);
+
+      if (!data) {
+        setObservations(null, "Live operational intelligence timeout. Dashboard will continue retrying.");
+      } else {
         setObservations(data);
+      }
+
+      setDeployStage(5);
+      await animateProgressTo(deploymentTargets[5], controller.signal);
+      await wait(220);
+
+      if (!controller.signal.aborted) {
         setObservationsStatus("success");
-        return data;
-      })
-      .catch((error: unknown) => {
+        setDeployStage(6);
+        await animateProgressTo(100, controller.signal);
+        await wait(420);
+        completeOnboarding();
+        router.push("/dashboard");
+      }
+    } catch (error: unknown) {
+      if (!controller.signal.aborted) {
         const message = error instanceof Error ? error.message : "Backend request failed";
         setObservations(null, message);
         setObservationsErrorMessage(message);
         setObservationsStatus("error");
-        return null;
-      });
-
-    const timer = window.setInterval(() => {
-      index += 1;
-      setDeployStage(index);
-      if (index >= deploymentStages.length - 1) {
-        window.clearInterval(timer);
-        observationsPromise.finally(() => {
-          completeOnboarding();
-          router.push("/dashboard");
-        });
       }
-    }, 900);
+    }
   }
 
   useEffect(() => {
@@ -303,7 +387,6 @@ export default function OnboardingWizard() {
                 <div>
                   <div className="text-[0.65rem] uppercase tracking-[0.24em] text-signal">CHANDRA IDENTITY REGISTRY</div>
                   <h2 className="mt-3 text-3xl font-semibold uppercase tracking-[0.02em]">DEFINE YOUR DIGITAL OPERATOR IDENTITY</h2>
-                  <p className="text-muted mt-2">Assign a designation to your autonomous AI cloud engineer and provision its operational signature for governed deployment.</p>
                 </div>
 
                 <label className="block">
@@ -571,15 +654,17 @@ export default function OnboardingWizard() {
                 <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-signal/30 bg-black/40 px-3 py-1 text-[0.6rem] uppercase tracking-[0.18em] text-signal">
                   <span className={`h-1.5 w-1.5 rounded-full ${observationsStatus === "loading" ? "bg-signal pulse-core" : observationsStatus === "success" ? "bg-emerald-300" : observationsStatus === "error" ? "bg-amber" : "bg-muted"}`} />
                   {observationsStatus === "loading"
-                    ? "STREAMING LANGGRAPH INTELLIGENCE..."
+                    ? "RETRIEVING LIVE OPERATIONAL INTELLIGENCE..."
                     : observationsStatus === "success"
-                    ? "OPERATIONAL INTELLIGENCE RECEIVED"
+                    ? "LIVE OPERATIONAL INTELLIGENCE RECEIVED"
                     : observationsStatus === "error"
-                    ? "BACKEND UNREACHABLE - USING FALLBACK"
+                    ? "LIVE DEPLOYMENT SYNC PAUSED"
                     : "AWAITING BACKEND SYNC"}
                 </div>
                 {observationsStatus === "error" && observationsErrorMessage ? (
-                  <p className="mt-2 text-[0.7rem] text-amber/80">{observationsErrorMessage}</p>
+                  <div className="mt-3">
+                    <p className="text-[0.7rem] text-amber/80">{observationsErrorMessage}</p>
+                  </div>
                 ) : null}
                 <div className="mt-6 rounded-3xl border border-signal/20 bg-black/30 p-5 text-left shadow-[0_0_24px_rgba(255,59,59,0.08)]">
                   <div className="flex items-center gap-3">

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { generateEmployeeId, type AgentGender } from "./agentProfile";
 import { buildKraAgentPayload, buildSelectedKras, normalizeKraName, predefinedKraIds, type KraAgentPayload } from "./kraCatalog";
 import type { AgentObservation, CostMetricsOutput } from "@/services/api";
@@ -80,7 +80,7 @@ const STORAGE_KEY = "digital-employee-onboarding";
 function readSessionStorage(): Partial<OnboardingState> | null {
   if (typeof window === "undefined") return null;
   try {
-    const stored = window.sessionStorage.getItem(STORAGE_KEY);
+    const stored = window.localStorage.getItem(STORAGE_KEY) ?? window.sessionStorage.getItem(STORAGE_KEY);
     if (!stored) return null;
     return JSON.parse(stored) as Partial<OnboardingState>;
   } catch {
@@ -107,7 +107,16 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const selectedKRAs = useMemo(() => buildSelectedKras(predefinedKras, customKras), [predefinedKras, customKras]);
   const kraPayload = useMemo(() => buildKraAgentPayload(predefinedKras, customKras), [predefinedKras, customKras]);
 
+  const predefinedKrasRef = useRef(predefinedKras);
   useEffect(() => {
+    predefinedKrasRef.current = predefinedKras;
+  }, [predefinedKras]);
+
+  const hydratedRef = useRef(false);
+
+  useEffect(() => {
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
     const parsed = readSessionStorage();
     if (parsed) {
       if (parsed.agentName) {
@@ -132,12 +141,9 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       }
       if (typeof parsed.onboardingCompleted === "boolean") setOnboardingCompleted(parsed.onboardingCompleted);
       if (parsed.observations) setObservationsState(parsed.observations as AgentObservation);
+      if (typeof parsed.observationsError === "string") setObservationsError(parsed.observationsError);
       if (parsed.costMetrics) setCostMetricsState(parsed.costMetrics as CostMetricsOutput);
-    }
-    try {
-      window.localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      // ignore
+      if (typeof parsed.costMetricsError === "string") setCostMetricsError(parsed.costMetricsError);
     }
     setHydrated(true);
   }, []);
@@ -145,65 +151,66 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      window.sessionStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          agentName,
-          employeeId,
-          gender,
-          avatarId,
-          role,
-          maturity,
-          permissions,
-          predefinedKras,
-          customKras,
-          selectedKRAs,
-          onboardingCompleted,
-          observations,
-          costMetrics
-        })
-      );
+      const serialized = JSON.stringify({
+        agentName,
+        employeeId,
+        gender,
+        avatarId,
+        role,
+        maturity,
+        permissions,
+        predefinedKras,
+        customKras,
+        selectedKRAs,
+        onboardingCompleted,
+        observations,
+        observationsError,
+        costMetrics,
+        costMetricsError
+      });
+      window.localStorage.setItem(STORAGE_KEY, serialized);
+      window.sessionStorage.setItem(STORAGE_KEY, serialized);
     } catch {
       // ignore storage errors
     }
-  }, [agentName, employeeId, gender, avatarId, role, maturity, permissions, predefinedKras, customKras, selectedKRAs, onboardingCompleted, observations, costMetrics, hydrated]);
+  }, [agentName, employeeId, gender, avatarId, role, maturity, permissions, predefinedKras, customKras, selectedKRAs, onboardingCompleted, observations, observationsError, costMetrics, costMetricsError, hydrated]);
 
-  function toggleKRA(kra: string) {
+  const toggleKRA = useCallback((kra: string) => {
     setPredefinedKras((current) => (current.includes(kra) ? current.filter((k) => k !== kra) : [...current, kra]));
-  }
+  }, []);
 
-  function togglePermission(permission: string) {
+  const togglePermission = useCallback((permission: string) => {
     setPermissions((current) => (current.includes(permission) ? current.filter((item) => item !== permission) : [...current, permission]));
-  }
+  }, []);
 
-  function addCustomKRA(kra: string) {
+  const addCustomKRA = useCallback((kra: string) => {
     const normalized = normalizeKraName(kra);
     if (!normalized) return;
     setCustomKras((current) => {
-      const exists = buildSelectedKras(predefinedKras, current).some((item) => item.toLowerCase() === normalized.toLowerCase());
+      const exists = buildSelectedKras(predefinedKrasRef.current, current).some((item) => item.toLowerCase() === normalized.toLowerCase());
       return exists ? current : [...current, normalized];
     });
-  }
+  }, []);
 
-  function removeCustomKRA(kra: string) {
+  const removeCustomKRA = useCallback((kra: string) => {
     setCustomKras((current) => current.filter((item) => item !== kra));
-  }
+  }, []);
 
-  function completeOnboarding() {
+  const completeOnboarding = useCallback(() => {
     setOnboardingCompleted(true);
-  }
+  }, []);
 
-  function setObservations(data: AgentObservation | null, error: string | null = null) {
+  const setObservations = useCallback((data: AgentObservation | null, error: string | null = null) => {
     setObservationsState(data);
     setObservationsError(error);
-  }
+  }, []);
 
-  function setCostMetrics(data: CostMetricsOutput | null, error: string | null = null) {
+  const setCostMetrics = useCallback((data: CostMetricsOutput | null, error: string | null = null) => {
     setCostMetricsState(data);
     setCostMetricsError(error);
-  }
+  }, []);
 
-  function reset() {
+  const reset = useCallback(() => {
     setAgentName("");
     setEmployeeId("");
     setGender("Neutral / Synthetic AI");
@@ -219,51 +226,77 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     setCostMetricsState(null);
     setCostMetricsError(null);
     try {
+      window.localStorage.removeItem(STORAGE_KEY);
       window.sessionStorage.removeItem(STORAGE_KEY);
     } catch {
       // ignore
     }
-  }
+  }, []);
 
-  return (
-    <OnboardingCtx.Provider
-      value={{
-        agentName,
-        employeeId,
-        gender,
-        avatarId,
-        role,
-        maturity,
-        permissions,
-        predefinedKras,
-        customKras,
-        selectedKRAs,
-        kraPayload,
-        onboardingCompleted,
-        hydrated,
-        observations,
-        observationsError,
-        costMetrics,
-        costMetricsError,
-        setAgentName,
-        setEmployeeId,
-        setGender,
-        setAvatarId,
-        setRole,
-        setMaturity,
-        togglePermission,
-        toggleKRA,
-        addCustomKRA,
-        removeCustomKRA,
-        setObservations,
-        setCostMetrics,
-        completeOnboarding,
-        reset
-      }}
-    >
-      {children}
-    </OnboardingCtx.Provider>
+  const contextValue = useMemo<OnboardingState>(
+    () => ({
+      agentName,
+      employeeId,
+      gender,
+      avatarId,
+      role,
+      maturity,
+      permissions,
+      predefinedKras,
+      customKras,
+      selectedKRAs,
+      kraPayload,
+      onboardingCompleted,
+      hydrated,
+      observations,
+      observationsError,
+      costMetrics,
+      costMetricsError,
+      setAgentName,
+      setEmployeeId,
+      setGender,
+      setAvatarId,
+      setRole,
+      setMaturity,
+      togglePermission,
+      toggleKRA,
+      addCustomKRA,
+      removeCustomKRA,
+      setObservations,
+      setCostMetrics,
+      completeOnboarding,
+      reset
+    }),
+    [
+      agentName,
+      employeeId,
+      gender,
+      avatarId,
+      role,
+      maturity,
+      permissions,
+      predefinedKras,
+      customKras,
+      selectedKRAs,
+      kraPayload,
+      onboardingCompleted,
+      hydrated,
+      observations,
+      observationsError,
+      costMetrics,
+      costMetricsError,
+      togglePermission,
+      toggleKRA,
+      addCustomKRA,
+      removeCustomKRA,
+      setObservations,
+      setCostMetrics,
+      completeOnboarding,
+      reset
+    ]
   );
+
+  return <OnboardingCtx.Provider value={contextValue}>{children}</OnboardingCtx.Provider>;
 }
 
 export function useOnboarding() {

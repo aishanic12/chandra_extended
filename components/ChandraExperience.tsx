@@ -3,8 +3,9 @@
 import { useOnboarding } from "@/store/OnboardingContext";
 import { getAvatarById, getAvatarImageSrc, type AgentAvatar } from "@/store/agentProfile";
 import { getKraMetric } from "@/store/kraCatalog";
-import { fetchCostMetrics } from "@/services/api";
+import { fetchAgentObservations, fetchCostMetrics, sendCopilotMessage, type CopilotChatMessage } from "@/services/api";
 import {
+  buildKraPayload,
   deriveApprovals,
   deriveCostBreakdown,
   deriveCostCards,
@@ -47,14 +48,12 @@ import {
   CartesianGrid,
   Line,
   LineChart,
-  RadialBar,
-  RadialBarChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis
 } from "recharts";
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 type Severity = "P1" | "P2" | "P3" | "P4";
 type IncidentStatus = "Resolved" | "Investigating" | "Escalated" | "Monitoring" | "Awaiting Approval";
@@ -114,6 +113,8 @@ type ApprovalRow = {
   lockState: string;
   emailStatus: EmailStatus;
   pendingReason: string;
+  kraCode: string;
+  steps: string[];
 };
 
 type KraReview = {
@@ -222,16 +223,6 @@ const kraReviewData: KraReview[] = [
   }
 ];
 
-const scoreMetrics = [
-  { key: "P", label: "Productivity", value: 92, weight: 1.0, contribution: 13, delta: "+13%", color: "#ff3b30", interpretation: "Delivery cadence" },
-  { key: "Q", label: "Quality", value: 96, weight: 1.0, contribution: 14, delta: "+14%", color: "#f4efe7", interpretation: "Code quality" },
-  { key: "E", label: "Efficiency", value: 89, weight: 1.5, contribution: 18, delta: "+18%", color: "#ffb347", interpretation: "Cycle time" },
-  { key: "G", label: "Goal Attainment", value: 87, weight: 1.0, contribution: 12, delta: "+12%", color: "#ff6a3d", interpretation: "Delivery alignment" },
-  { key: "R", label: "Reliability", value: 98, weight: 1.5, contribution: 21, delta: "+21%", color: "#ffb347", interpretation: "Availability" },
-  { key: "C", label: "Collaboration", value: 83, weight: 1.0, contribution: 11, delta: "+11%", color: "#8ed9a8", interpretation: "Team sync" },
-  { key: "V", label: "Value Add", value: 94, weight: 1.0, contribution: 12, delta: "+12%", color: "#ff3b30", interpretation: "Business impact" }
-];
-
 const trendData = [
   { t: "00", score: 83, risk: 24, kra: 76 },
   { t: "04", score: 86, risk: 19, kra: 80 },
@@ -242,323 +233,58 @@ const trendData = [
   { t: "24", score: 95, risk: 12, kra: 93 }
 ];
 
-const costCards = [
-  { label: "API Cost Today", value: "$427.18", delta: "+3.2%", tone: "text-amber" },
-  { label: "AWS Cost MTD", value: "$182,940", delta: "-4.8%", tone: "text-emerald-300" },
-  { label: "Model Tokens (24h)", value: "84.3M", delta: "+11.6%", tone: "text-amber" },
-  { label: "Infra Load", value: "67%", delta: "stable", tone: "text-emerald-300" },
-  { label: "Est. Monthly Spend", value: "$248K", delta: "-2.1%", tone: "text-emerald-300" }
-];
+function EmptyOperationalState({ label }: { label: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/25 px-3 py-4 text-center text-[0.68rem] uppercase tracking-[0.16em] text-muted">
+      {label}
+    </div>
+  );
+}
 
-const baseEvents: OpsEvent[] = [
-  {
-    id: "evt-001",
-    time: "14:42:11",
-    severity: "P2",
-    status: "Resolved",
-    incident: "IAM policy drift detected",
-    service: "IAM",
-    account: "LS-Prod-2147",
-    confidence: 96,
-    resolution: "Reverted policy to least-privilege baseline. Evidence attached to CHG-4912.",
-    approvalState: "Approved",
-    reviewer: "Mira Shah",
-    lockState: "Unlocked",
-    escalation: "None"
-  },
-  {
-    id: "evt-002",
-    time: "14:43:26",
-    severity: "P1",
-    status: "Awaiting Approval",
-    incident: "S3 bucket exposure blocked",
-    service: "S3",
-    account: "Clinical-Data-8821",
-    confidence: 91,
-    resolution: "Public ACL blocked. Bucket policy quarantined. Awaiting human approval for production write-lock.",
-    approvalState: "Awaiting Review",
-    reviewer: "Dr. Mira Shah",
-    lockState: "Remediation Paused",
-    escalation: "Security Review"
-  },
-  {
-    id: "evt-003",
-    time: "14:44:03",
-    severity: "P3",
-    status: "Monitoring",
-    incident: "EC2 cost anomaly terminated",
-    service: "EC2",
-    account: "Research-Compute-1190",
-    confidence: 94,
-    resolution: "Idle burst fleet terminated post owner validation. Rightsizing ticket + billing trace generated.",
-    approvalState: "Approved",
-    reviewer: "FinOps",
-    lockState: "Released",
-    escalation: "None"
-  },
-  {
-    id: "evt-004",
-    time: "14:45:38",
-    severity: "P2",
-    status: "Resolved",
-    incident: "CloudTrail delivery restored",
-    service: "CloudTrail",
-    account: "GxP-Audit-3308",
-    confidence: 98,
-    resolution: "Trail target bucket encryption corrected. Delivery validation written to SOC2 pack.",
-    approvalState: "Approved",
-    reviewer: "Mira Shah",
-    lockState: "Unlocked",
-    escalation: "None"
-  },
-  {
-    id: "evt-005",
-    time: "14:46:19",
-    severity: "P4",
-    status: "Resolved",
-    incident: "MFA enforcement applied",
-    service: "IAM Identity Center",
-    account: "Shared-Services-4472",
-    confidence: 99,
-    resolution: "Conditional access rule applied to 18 stale users. Notification queued for identity ops.",
-    approvalState: "Approved",
-    reviewer: "IAM Ops",
-    lockState: "Unlocked",
-    escalation: "None"
-  }
-];
+type ObservationsSyncState = {
+  status: "loading" | "retrying" | "success" | "error";
+  attempt: number;
+  message: string;
+  nextDelayMs: number;
+};
 
-const incidents: Incident[] = [
-  {
-    ...baseEvents[1],
-    triage: "01m 12s",
-    eta: "06m",
-    rootCause: "Legacy data transfer role attempted public ACL write against regulated bucket.",
-    humanEscalation: "Production data plane approval",
-    approvalState: "Awaiting Review",
-    reviewer: "Dr. Mira Shah",
-    lockState: "Remediation Paused",
-    escalation: "Security Review"
-  },
-  {
-    ...baseEvents[0],
-    triage: "42s",
-    eta: "Complete",
-    rootCause: "Terraform module drift from emergency role patch.",
-    humanEscalation: "None",
-    approvalState: "Approved",
-    reviewer: "Mira Shah",
-    lockState: "Unlocked",
-    escalation: "None"
-  },
-  {
-    ...baseEvents[2],
-    triage: "02m 04s",
-    eta: "Monitoring",
-    rootCause: "Batch genomics workload left c7i fleet running after completion signal failed.",
-    humanEscalation: "Leadership digest queued",
-    approvalState: "Approved",
-    reviewer: "FinOps",
-    lockState: "Released",
-    escalation: "None"
-  },
-  {
-    ...baseEvents[3],
-    triage: "51s",
-    eta: "Complete",
-    rootCause: "KMS key alias mismatch after cross-account evidence bucket rotation.",
-    humanEscalation: "None",
-    approvalState: "Approved",
-    reviewer: "Mira Shah",
-    lockState: "Unlocked",
-    escalation: "None"
-  },
-  {
-    id: "evt-006",
-    time: "14:47:54",
-    severity: "P2",
-    status: "Escalated",
-    incident: "GuardDuty unauthorized API call",
-    service: "GuardDuty",
-    account: "Pharma-Prod-7710",
-    confidence: 87,
-    resolution: "Session token revoked, source role isolated, forensic bundle queued for security review.",
-    triage: "01m 49s",
-    eta: "18m",
-    rootCause: "Suspicious AssumeRole chain from unmanaged workstation network.",
-    humanEscalation: "Security owner assigned",
-    approvalState: "Escalated",
-    reviewer: "SecOps - D. Okafor",
-    lockState: "Remediation Paused",
-    escalation: "Security Owner"
-  }
-];
+function OperationalSkeleton({ label }: { label: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/25 p-3 telemetry-shimmer">
+      <div className="flex items-center gap-2 text-[0.62rem] uppercase tracking-[0.18em] text-amber">
+        <span className="h-1.5 w-1.5 rounded-full bg-signal pulse-core" />
+        {label}
+      </div>
+      <div className="mt-3 space-y-2">
+        <div className="h-2 rounded-full bg-white/10" />
+        <div className="h-2 w-4/5 rounded-full bg-white/8" />
+        <div className="h-2 w-2/3 rounded-full bg-white/8" />
+      </div>
+    </div>
+  );
+}
 
-const auditSeed: AuditRow[] = [
-  {
-    timestamp: "2026-05-18 14:42:11",
-    incidentId: "INC-2044",
-    remediation: "Revert IAM policy to baseline",
-    account: "LS-Prod-2147",
-    confidence: 96,
-    reviewer: "Auto / Mira Shah",
-    compliance: "SOC2-CC6.1",
-    evidencePack: "EVD-9821"
-  },
-  {
-    timestamp: "2026-05-18 14:43:26",
-    incidentId: "INC-2045",
-    remediation: "Block public S3 ACL",
-    account: "Clinical-Data-8821",
-    confidence: 91,
-    reviewer: "Pending / D. Okafor",
-    compliance: "GxP-117",
-    evidencePack: "EVD-9822"
-  },
-  {
-    timestamp: "2026-05-18 14:44:03",
-    incidentId: "INC-2046",
-    remediation: "Terminate idle EC2 fleet",
-    account: "Research-Compute-1190",
-    confidence: 94,
-    reviewer: "Auto / FinOps",
-    compliance: "Cost-Policy-04",
-    evidencePack: "EVD-9823"
-  },
-  {
-    timestamp: "2026-05-18 14:45:38",
-    incidentId: "INC-2047",
-    remediation: "Repair CloudTrail KMS alias",
-    account: "GxP-Audit-3308",
-    confidence: 98,
-    reviewer: "Auto / Mira Shah",
-    compliance: "SOC2-CC7.2",
-    evidencePack: "EVD-9824"
-  },
-  {
-    timestamp: "2026-05-18 14:46:19",
-    incidentId: "INC-2048",
-    remediation: "Enforce MFA on stale users",
-    account: "Shared-Services-4472",
-    confidence: 99,
-    reviewer: "Auto / IAM Ops",
-    compliance: "21CFR-Part11",
-    evidencePack: "EVD-9825"
-  },
-  {
-    timestamp: "2026-05-18 14:47:54",
-    incidentId: "INC-2049",
-    remediation: "Revoke session, isolate role",
-    account: "Pharma-Prod-7710",
-    confidence: 87,
-    reviewer: "Pending / SecOps",
-    compliance: "SOC2-CC6.3",
-    evidencePack: "EVD-9826"
-  },
-  {
-    timestamp: "2026-05-18 14:49:08",
-    incidentId: "INC-2050",
-    remediation: "Rotate KMS data key",
-    account: "GxP-Audit-3308",
-    confidence: 95,
-    reviewer: "Auto / Mira Shah",
-    compliance: "GxP-118",
-    evidencePack: "EVD-9827"
-  },
-  {
-    timestamp: "2026-05-18 14:50:44",
-    incidentId: "INC-2051",
-    remediation: "Patch SG ingress drift",
-    account: "LS-Prod-2147",
-    confidence: 92,
-    reviewer: "Auto / NetOps",
-    compliance: "SOC2-CC6.6",
-    evidencePack: "EVD-9828"
-  }
-];
-
-const approvalSeed: ApprovalRow[] = [
-  {
-    id: "APV-501",
-    incident: "S3 bucket exposure - production write-lock",
-    severity: "P1",
-    state: "Awaiting Review",
-    reviewer: "Dr. Mira Shah",
-    requested: "14:43:34",
-    decided: "-",
-    note: "Public ACL blocked; awaiting prod write-lock confirmation.",
-    account: "Clinical-Data-8821",
-    confidence: 91,
-    requestedBy: "Chandra AI",
-    lockState: "Remediation Paused",
-    emailStatus: "sent",
-    pendingReason: "Dangerous S3 write-lock in production"
-  },
-  {
-    id: "APV-502",
-    incident: "GuardDuty unauthorized API call",
-    severity: "P2",
-    state: "Escalated",
-    reviewer: "SecOps - D. Okafor",
-    requested: "14:48:02",
-    decided: "-",
-    note: "Forensic bundle awaiting security owner review.",
-    account: "Pharma-Prod-7710",
-    confidence: 87,
-    requestedBy: "Chandra AI",
-    lockState: "Remediation Paused",
-    emailStatus: "pending",
-    pendingReason: "Privilege escalation chain detected"
-  },
-  {
-    id: "APV-503",
-    incident: "Privileged role deletion (legacy admin)",
-    severity: "P1",
-    state: "Approved",
-    reviewer: "Dr. Mira Shah",
-    requested: "13:52:11",
-    decided: "13:58:40",
-    note: "Approved per least-privilege baseline. Rollback armed.",
-    account: "LS-Prod-2147",
-    confidence: 89,
-    requestedBy: "Chandra AI",
-    lockState: "Unlocked",
-    emailStatus: "approved",
-    pendingReason: "High-risk IAM policy change"
-  },
-  {
-    id: "APV-504",
-    incident: "RDS snapshot cross-region copy",
-    severity: "P3",
-    state: "Approved",
-    reviewer: "Data Gov - L. Chen",
-    requested: "12:11:09",
-    decided: "12:14:51",
-    note: "Encryption-at-rest verified.",
-    account: "GxP-Audit-3308",
-    confidence: 95,
-    requestedBy: "Chandra AI",
-    lockState: "Unlocked",
-    emailStatus: "approved",
-    pendingReason: "Standard data replication"
-  },
-  {
-    id: "APV-505",
-    incident: "VPC peering deletion request",
-    severity: "P2",
-    state: "Rejected",
-    reviewer: "Network - R. Patel",
-    requested: "11:08:22",
-    decided: "11:14:03",
-    note: "Rejected: active workload dependency detected.",
-    account: "Shared-Services-4472",
-    confidence: 82,
-    requestedBy: "Chandra AI",
-    lockState: "Remediation Paused",
-    emailStatus: "rejected",
-    pendingReason: "Destructive network action"
-  }
-];
+function OperationalRetryNotice({ sync }: { sync: ObservationsSyncState }) {
+  const label =
+    sync.status === "loading"
+      ? "RETRIEVING LIVE OBSERVABILITY DATA..."
+      : sync.status === "retrying"
+      ? "RETRYING SECURITY ANALYSIS..."
+      : sync.status === "error"
+      ? "WAITING FOR LANGGRAPH RESPONSE..."
+      : "LIVE OPERATIONAL INTELLIGENCE ONLINE";
+  return (
+    <div className="rounded-2xl border border-amber/25 bg-black/30 px-3 py-2 text-[0.62rem] uppercase tracking-[0.16em] text-muted">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`h-1.5 w-1.5 rounded-full ${sync.status === "success" ? "bg-emerald-300" : "bg-signal pulse-core"}`} />
+        <span className={sync.status === "success" ? "text-emerald-300" : "text-amber"}>{label}</span>
+        {sync.attempt > 0 ? <span>attempt {sync.attempt}</span> : null}
+        {sync.nextDelayMs > 0 ? <span>next retry {Math.ceil(sync.nextDelayMs / 1000)}s</span> : null}
+      </div>
+      {sync.message ? <div className="mt-1 normal-case text-frost/65">{sync.message}</div> : null}
+    </div>
+  );
+}
 
 function nowTime(offset = 0) {
   const d = new Date(Date.now() + offset);
@@ -665,10 +391,12 @@ function AgentAvatarMark({ avatar, size = 80 }: { avatar: AgentAvatar; size?: nu
 
 function CommandHeader({
   liveObservations,
-  liveSummary
+  liveSummary,
+  sync
 }: {
   liveObservations: ReturnType<typeof useOnboarding>["observations"];
   liveSummary: ReturnType<typeof summarizeIssuesBySeverity>;
+  sync: ObservationsSyncState;
 }) {
   const router = useRouter();
   const { agentName, avatarId, permissions, observationsError } = useOnboarding();
@@ -742,6 +470,7 @@ function CommandHeader({
           liveObservations={liveObservations?.observations}
           liveSecurity={liveObservations?.security_posture}
           liveCompliance={liveObservations?.compliance_summary}
+          sync={sync}
         />
       </div>
     </section>
@@ -753,29 +482,27 @@ function OperationalIntelligencePanel({
   liveEvents,
   liveObservations,
   liveSecurity,
-  liveCompliance
+  liveCompliance,
+  sync
 }: {
   permissionsCount: number;
   liveEvents?: LiveOpsEvent[];
   liveObservations?: string[];
   liveSecurity?: string[];
   liveCompliance?: string;
+  sync: ObservationsSyncState;
 }) {
-  const fallbackAlerts: Array<{ id: string; severity: Severity; text: string; time: string }> = [
-    { id: "alert-1", severity: "P1", text: "High CPU usage detected in EC2 cluster", time: "2m ago" },
-    { id: "alert-2", severity: "P2", text: "Deployment rollback triggered in us-east-1", time: "6m ago" },
-    { id: "alert-3", severity: "P1", text: "Memory threshold exceeded on production node", time: "11m ago" },
-    { id: "alert-4", severity: "P3", text: "Unusual traffic spike detected", time: "18m ago" }
-  ];
-
   const alerts = liveEvents && liveEvents.length
-    ? liveEvents.slice(0, 6).map((event) => ({
+    ? liveEvents.map((event) => ({
         id: event.id,
         severity: event.severity,
         text: event.incident,
-        time: event.time
+        time: event.time,
+        service: event.service,
+        region: event.region,
+        resourceId: event.resourceId
       }))
-    : fallbackAlerts;
+    : [];
 
   const tone = {
     P1: "text-signal",
@@ -786,18 +513,14 @@ function OperationalIntelligencePanel({
 
   const liveObservationRows: Array<[string, string]> =
     liveObservations && liveObservations.length
-      ? liveObservations.slice(0, 3).map((text, index) => [
+      ? liveObservations.map((text, index) => [
           index === 0 ? "Observation" : index === 1 ? "Telemetry signal" : "Operational note",
           text
         ])
-      : [
-          ["Observation", "Release rollback correlated with elevated memory pressure."],
-          ["Recommended action", "Hold remediation until supervisor approval is captured."],
-          ["Security posture", `${permissionsCount || 0} governed access scopes active.`]
-        ];
+      : [];
 
   const observationRows = liveObservationRows;
-  const securityRows = liveSecurity && liveSecurity.length ? liveSecurity.slice(0, 3) : [];
+  const securityRows = liveSecurity && liveSecurity.length ? liveSecurity : [];
   const complianceText = liveCompliance && liveCompliance.length ? liveCompliance : `${permissionsCount || 0} governed access scopes active.`;
 
   return (
@@ -807,31 +530,48 @@ function OperationalIntelligencePanel({
           <div className="text-[0.65rem] uppercase tracking-[0.22em] text-muted">OPERATIONAL INTELLIGENCE</div>
           <div className="mt-2 text-sm text-frost/70">Live alerts, observations, recommended actions, and security posture.</div>
         </div>
-        <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-[0.68rem] uppercase tracking-[0.18em] text-muted">
-          {alerts.length} alerts - governed
+        <div className="grid gap-2 sm:min-w-[360px]">
+          <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-[0.68rem] uppercase tracking-[0.18em] text-muted">
+            {alerts.length} alerts - governed
+          </div>
+          <OperationalRetryNotice sync={sync} />
         </div>
       </div>
       <div className="grid gap-3 lg:grid-cols-[1.35fr_1fr]">
-        <div className="grid gap-3 sm:grid-cols-2">
-          {alerts.map((alert) => (
-            <div key={alert.id} className="rounded-3xl border border-white/10 bg-black/25 p-3">
-              <div className="flex items-center justify-between gap-3 text-[0.7rem] uppercase tracking-[0.16em] text-muted">
-                <span className={tone[alert.severity]}>{alert.severity}</span>
-                <span>{alert.time}</span>
-              </div>
-              <div className="mt-3 text-sm text-frost">{alert.text}</div>
+        <div className="operational-scroll max-h-[330px] pr-1">
+          {alerts.length ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {alerts.map((alert) => (
+                <div key={alert.id} className="rounded-3xl border border-white/10 bg-black/25 p-3">
+                  <div className="flex items-center justify-between gap-3 text-[0.7rem] uppercase tracking-[0.16em] text-muted">
+                    <span className={tone[alert.severity]}>{alert.severity}</span>
+                    <span>{alert.time}</span>
+                  </div>
+                  <div className="mt-3 text-sm text-frost">{alert.text}</div>
+                  {alert.service || alert.region || alert.resourceId ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5 text-[0.55rem] uppercase tracking-[0.16em] text-muted">
+                      {alert.service ? <span className="border border-white/10 bg-white/[0.03] px-1.5 py-0.5 text-frost/80">{alert.service}</span> : null}
+                      {alert.region ? <span className="border border-amber/30 bg-amber/8 px-1.5 py-0.5 text-amber">{alert.region}</span> : null}
+                      {alert.resourceId ? <span className="border border-signal/30 bg-signal/10 px-1.5 py-0.5 text-signal normal-case tracking-[0.1em]">{alert.resourceId}</span> : null}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
             </div>
-          ))}
+          ) : (
+            <OperationalSkeleton label={sync.status === "success" ? "No live incidents returned" : "Retrieving live alerts"} />
+          )}
         </div>
-        <div className="grid gap-3">
-          {observationRows.map(([label, text], index) => (
-            <div key={`${label}-${index}`} className="rounded-3xl border border-white/10 bg-black/25 p-3">
-              <div className="text-[0.62rem] uppercase tracking-[0.2em] text-amber">{label}</div>
-              <div className="mt-2 text-sm leading-5 text-frost/80">{text}</div>
-            </div>
-          ))}
-          {securityRows.length > 0 ? (
-            <div className="rounded-3xl border border-signal/25 bg-signal/8 p-3">
+        <div className="operational-scroll max-h-[330px] pr-1">
+          <div className="grid gap-3">
+            {observationRows.length ? observationRows.map(([label, text], index) => (
+              <div key={`${label}-${index}`} className="rounded-3xl border border-white/10 bg-black/25 p-3">
+                <div className="text-[0.62rem] uppercase tracking-[0.2em] text-amber">{label}</div>
+                <div className="mt-2 text-sm leading-5 text-frost/80">{text}</div>
+              </div>
+            )) : <OperationalSkeleton label={sync.status === "success" ? "No live observations returned" : "Waiting for LangGraph response"} />}
+            {securityRows.length > 0 ? (
+              <div className="rounded-3xl border border-signal/25 bg-signal/8 p-3">
               <div className="flex items-center gap-2 text-[0.62rem] uppercase tracking-[0.18em] text-signal">
                 <ShieldCheck size={13} /> Security findings
               </div>
@@ -840,13 +580,14 @@ function OperationalIntelligencePanel({
                   <li key={`security-${index}`} className="leading-5">{row}</li>
                 ))}
               </ul>
+              </div>
+            ) : null}
+            <div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/8 p-3">
+              <div className="flex items-center gap-2 text-[0.62rem] uppercase tracking-[0.18em] text-emerald-300">
+                <ShieldCheck size={13} /> Compliance posture
+              </div>
+              <div className="mt-2 text-sm text-frost/85 leading-5">{complianceText}</div>
             </div>
-          ) : null}
-          <div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/8 p-3">
-            <div className="flex items-center gap-2 text-[0.62rem] uppercase tracking-[0.18em] text-emerald-300">
-              <ShieldCheck size={13} /> Compliance posture
-            </div>
-            <div className="mt-2 text-sm text-frost/85 leading-5">{complianceText}</div>
           </div>
         </div>
       </div>
@@ -902,10 +643,10 @@ function CostMonitoring({
 }) {
   const displayCards = cards && cards.length
     ? cards.map((card) => ({ label: card.label, value: card.value, delta: card.delta, tone: card.tone, note: card.note }))
-    : costCards.map((card) => ({ ...card, note: "" }));
+    : [];
 
-  const regionRows = (breakdown?.regions ?? []).slice(0, 5);
-  const serviceRows = (breakdown?.services ?? []).slice(0, 5);
+  const regionRows = breakdown?.regions ?? [];
+  const serviceRows = breakdown?.services ?? [];
   const hasBreakdown = Boolean(breakdown && (breakdown.regions.length || breakdown.services.length));
   const sub = breakdown?.window
     ? `FinOps · ${breakdown.window}`
@@ -914,20 +655,26 @@ function CostMonitoring({
   return (
     <Reveal className="glass overflow-hidden p-2">
       <SectionHead label="COST MONITORING" sub={sub} />
-      <div className="flex gap-3 overflow-x-auto">
-        {displayCards.map((card) => (
-          <div key={card.label} className="kpi-card px-3 py-2 min-w-[160px]" title={card.note ?? ""}>
-            <span className="kpi-label">{card.label}</span>
-            <span className="kpi-value">{card.value}</span>
-            <span className={cx("kpi-delta", card.tone)}>{card.delta}</span>
+      <div className="flex gap-3 overflow-x-auto scrollbar-mini pb-1">
+        {displayCards.length ? (
+          displayCards.map((card) => (
+            <div key={card.label} className="kpi-card px-3 py-2 min-w-[160px]" title={card.note ?? ""}>
+              <span className="kpi-label">{card.label}</span>
+              <span className="kpi-value">{card.value}</span>
+              <span className={cx("kpi-delta", card.tone)}>{card.delta}</span>
+            </div>
+          ))
+        ) : (
+          <div className="min-w-full">
+            <EmptyOperationalState label="No live cost snapshot returned" />
           </div>
-        ))}
+        )}
       </div>
       {hasBreakdown ? (
         <div className="mt-3 grid gap-3 md:grid-cols-2 px-1">
           <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
             <div className="text-[0.6rem] uppercase tracking-[0.18em] text-amber">REGION SPEND</div>
-            <ul className="mt-2 space-y-1 text-[0.72rem]">
+            <ul className="operational-scroll mt-2 max-h-[170px] space-y-1 pr-1 text-[0.72rem]">
               {regionRows.map((row) => (
                 <li key={row.region} className="flex items-center justify-between border-b border-white/5 py-1 last:border-b-0">
                   <span className="text-frost">{row.region}</span>
@@ -938,7 +685,7 @@ function CostMonitoring({
           </div>
           <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
             <div className="text-[0.6rem] uppercase tracking-[0.18em] text-amber">TOP SERVICES</div>
-            <ul className="mt-2 space-y-1 text-[0.72rem]">
+            <ul className="operational-scroll mt-2 max-h-[170px] space-y-1 pr-1 text-[0.72rem]">
               {serviceRows.map((row) => (
                 <li key={row.service} className="flex items-center justify-between border-b border-white/5 py-1 last:border-b-0">
                   <span className="text-frost truncate pr-2" title={row.service}>{row.service}</span>
@@ -954,69 +701,11 @@ function CostMonitoring({
 }
 
 function useOperationalFeed(seed?: OpsEvent[]) {
-  const initial = seed && seed.length ? seed : baseEvents;
-  const [events, setEvents] = useState<OpsEvent[]>(initial);
+  const [events, setEvents] = useState<OpsEvent[]>(Array.isArray(seed) ? seed : []);
 
   useEffect(() => {
-    if (seed && seed.length) {
-      setEvents(seed);
-    }
+    setEvents(Array.isArray(seed) ? seed : []);
   }, [seed]);
-
-  useEffect(() => {
-    const templates: OpsEvent[] = [
-      {
-        id: "tmpl-001",
-        time: "00:00:00",
-        severity: "P2",
-        status: "Resolved",
-        incident: "IAM privilege reduced",
-        service: "IAM",
-        account: "Shared-Services-4472",
-        confidence: 95,
-        resolution: "Privilege boundary restored. Reviewer evidence generated.",
-        approvalState: "Approved",
-        reviewer: "Mira Shah",
-        lockState: "Unlocked",
-        escalation: "None"
-      },
-      {
-        id: "tmpl-002",
-        time: "00:00:00",
-        severity: "P3",
-        status: "Monitoring",
-        incident: "Cost spike contained",
-        service: "Compute Optimizer",
-        account: "Research-Compute-1190",
-        confidence: 92,
-        resolution: "Autoscaling ceiling reduced. Orphaned volumes tagged.",
-        approvalState: "Approved",
-        reviewer: "FinOps",
-        lockState: "Released",
-        escalation: "None"
-      },
-      {
-        id: "tmpl-003",
-        time: "00:00:00",
-        severity: "P1",
-        status: "Escalated",
-        incident: "Unauthorized API call",
-        service: "GuardDuty",
-        account: "Pharma-Prod-7710",
-        confidence: 88,
-        resolution: "Session revoked. Principal isolated. Awaiting review.",
-        approvalState: "Escalated",
-        reviewer: "SecOps - D. Okafor",
-        lockState: "Remediation Paused",
-        escalation: "Security Owner"
-      }
-    ];
-    const timer = window.setInterval(() => {
-      const template = templates[Math.floor(Date.now() / 4000) % templates.length];
-      setEvents((current) => [{ ...template, id: `evt-live-${Date.now()}`, time: nowTime() }, ...current].slice(0, 12));
-    }, 4200);
-    return () => window.clearInterval(timer);
-  }, []);
 
   return events;
 }
@@ -1025,7 +714,7 @@ function severityRank(severity: Severity) {
   return { P1: 4, P2: 3, P3: 2, P4: 1 }[severity];
 }
 
-function LiveOpsStream({ events }: { events: OpsEvent[] }) {
+function LiveOpsStream({ events, sync }: { events: OpsEvent[]; sync: ObservationsSyncState }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const prioritized = useMemo(() => {
@@ -1051,10 +740,11 @@ function LiveOpsStream({ events }: { events: OpsEvent[] }) {
         }
       />
       <div className="feed-stream max-h-[300px] space-y-1.5 overflow-y-auto pr-1">
-        <AnimatePresence initial={false}>
-          {prioritized.slice(0, 5).map((event) => {
-            const open = expandedId === event.id;
-            return (
+        {prioritized.length ? (
+          <AnimatePresence initial={false}>
+            {prioritized.map((event) => {
+              const open = expandedId === event.id;
+              return (
               <motion.div
                 key={event.id}
                 layout
@@ -1090,12 +780,15 @@ function LiveOpsStream({ events }: { events: OpsEvent[] }) {
                   ) : null}
                 </AnimatePresence>
               </motion.div>
-            );
-          })}
-        </AnimatePresence>
+              );
+            })}
+          </AnimatePresence>
+        ) : (
+          <OperationalSkeleton label={sync.status === "success" ? "No live operational feed events returned" : "Streaming operational events"} />
+        )}
       </div>
       <div className="mt-2 flex items-center justify-between border-t border-white/8 pt-2 text-[0.58rem] uppercase tracking-[0.18em] text-muted">
-        <span>showing 5 of {prioritized.length} events</span>
+        <span>showing {prioritized.length} live events</span>
         <span className="text-emerald-300">context synced to copilot</span>
       </div>
     </Reveal>
@@ -1176,13 +869,13 @@ function KRAMetricsReview({
   );
 }
 
-function ActiveIncidents({ source }: { source?: Incident[] }) {
+function ActiveIncidents({ source, sync }: { source?: Incident[]; sync: ObservationsSyncState }) {
   const [query, setQuery] = useState("");
   const [severity, setSeverity] = useState("All");
   const [status, setStatus] = useState("All");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const rows = source && source.length ? source : incidents;
+  const rows = Array.isArray(source) ? source : [];
   const filtered = rows.filter((incident) => {
     const text = `${incident.incident} ${incident.account} ${incident.service} ${incident.rootCause}`.toLowerCase();
     return (
@@ -1224,6 +917,7 @@ function ActiveIncidents({ source }: { source?: Incident[] }) {
         ))}
       </div>
       <div className="max-h-[360px] overflow-auto scrollbar-mini">
+        {filtered.length ? (
         <table className="w-full min-w-[1000px] border-collapse text-left text-[0.72rem]">
           <thead className="sticky top-0 z-10 bg-black/85 text-[0.58rem] uppercase tracking-[0.18em] text-muted backdrop-blur">
             <tr className="border-b border-white/12">
@@ -1296,6 +990,9 @@ function ActiveIncidents({ source }: { source?: Incident[] }) {
             })}
           </tbody>
         </table>
+        ) : (
+          <OperationalSkeleton label={sync.status === "success" ? "No live incidents matched" : "Retrieving incident analysis"} />
+        )}
       </div>
     </Reveal>
   );
@@ -1317,16 +1014,38 @@ function createEmailPayload(approval: ApprovalRow) {
   };
 }
 
+function deriveAuditRowsFromLive(events: OpsEvent[], approvals: ApprovalRow[], complianceSummary?: string): AuditRow[] {
+  const compliance = complianceSummary || "Live-Control";
+  const eventRows = events.map((event, index) => ({
+    timestamp: `${new Date().toISOString().slice(0, 10)} ${event.time}`,
+    incidentId: `LIVE-${String(index + 1).padStart(4, "0")}`,
+    remediation: event.resolution,
+    account: event.account,
+    confidence: event.confidence,
+    reviewer: event.reviewer ?? "Chandra AI",
+    compliance,
+    evidencePack: `LIVE-EVD-${String(index + 1).padStart(4, "0")}`
+  }));
+  const approvalRows = approvals.map((approval, index) => ({
+    timestamp: `${new Date().toISOString().slice(0, 10)} ${approval.requested}`,
+    incidentId: approval.id,
+    remediation: approval.note,
+    account: approval.account,
+    confidence: approval.confidence,
+    reviewer: approval.reviewer,
+    compliance,
+    evidencePack: `APPROVAL-${String(index + 1).padStart(4, "0")}`
+  }));
+  return [...eventRows, ...approvalRows];
+}
+
 function HumanReviewQueue({ seed }: { seed?: ApprovalRow[] }) {
-  const initialApprovals = seed && seed.length ? seed : approvalSeed;
-  const [approvals, setApprovals] = useState<ApprovalRow[]>(initialApprovals);
+  const [approvals, setApprovals] = useState<ApprovalRow[]>(Array.isArray(seed) ? seed : []);
   useEffect(() => {
-    if (seed && seed.length) {
-      setApprovals(seed);
-    }
+    setApprovals(Array.isArray(seed) ? seed : []);
   }, [seed]);
   const pendingApprovals = approvals.filter((row) => row.state === "Awaiting Review" || row.state === "Escalated");
-  const visibleApprovals = pendingApprovals.slice(0, 4);
+  const visibleApprovals = approvals;
 
   function markApproval(id: string, nextState: ApprovalState) {
     setApprovals((current) =>
@@ -1362,15 +1081,6 @@ function HumanReviewQueue({ seed }: { seed?: ApprovalRow[] }) {
     );
   }
 
-  if (visibleApprovals.length === 0) {
-    return (
-      <Reveal className="glass overflow-hidden p-4">
-        <SectionHead label="HUMAN APPROVAL CENTER" sub="No pending approvals" />
-        <p className="text-[0.8rem] text-frost/75">All high-risk incidents have been reviewed or paused. The system remains ready to surface the next supervisory decision.</p>
-      </Reveal>
-    );
-  }
-
   return (
     <Reveal className="glass overflow-hidden p-3">
       <SectionHead label="HUMAN APPROVAL CENTER" sub="High-risk review queue" />
@@ -1386,43 +1096,72 @@ function HumanReviewQueue({ seed }: { seed?: ApprovalRow[] }) {
         </div>
       </div>
 
-      <div className="flex gap-3 overflow-x-auto py-1">
-        {visibleApprovals.map((approval) => (
-          <div key={approval.id} className="glass flex-shrink-0 w-[340px] border border-white/10 p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2 text-[0.65rem] uppercase tracking-[0.14em] text-amber">
-                  <span>{approval.id}</span>
-                  <ApprovalBadge state={approval.state} />
+      <div className="operational-scroll flex max-h-[360px] gap-3 overflow-x-auto py-1">
+        {visibleApprovals.length ? (
+          visibleApprovals.map((approval) => (
+            <div key={approval.id} className="glass flex-shrink-0 w-[340px] border border-white/10 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2 text-[0.65rem] uppercase tracking-[0.14em] text-amber">
+                    <span>{approval.id}</span>
+                    <ApprovalBadge state={approval.state} />
+                    {approval.kraCode ? (
+                      <span className="border border-white/15 bg-white/[0.04] px-1.5 py-0.5 text-[0.55rem] tracking-[0.16em] text-frost/80">
+                        {approval.kraCode}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-frost">{approval.incident}</div>
+                  <div className="mt-1 text-[0.68rem] text-muted">{approval.account} · {approval.severity} · {approval.requested}</div>
                 </div>
-                <div className="mt-1 text-sm font-semibold text-frost">{approval.incident}</div>
-                <div className="mt-1 text-[0.68rem] text-muted">{approval.account} · {approval.severity} · {approval.requested}</div>
+                <div className="flex flex-col gap-2 w-[110px]">
+                  <button onClick={() => markApproval(approval.id, "Approved")} className="rounded-md border border-emerald-300/30 bg-emerald-300/10 px-2 py-1 text-[0.68rem] uppercase tracking-[0.08em] text-emerald-200">Approve</button>
+                  <button onClick={() => markApproval(approval.id, "Rejected")} className="rounded-md border border-signal/30 bg-signal/10 px-2 py-1 text-[0.68rem] uppercase tracking-[0.08em] text-signal">Reject</button>
+                  <button onClick={() => markApproval(approval.id, "Escalated")} className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[0.68rem] uppercase tracking-[0.08em] text-frost">Escalate</button>
+                </div>
               </div>
-              <div className="flex flex-col gap-2 w-[110px]">
-                <button onClick={() => markApproval(approval.id, "Approved")} className="rounded-md border border-emerald-300/30 bg-emerald-300/10 px-2 py-1 text-[0.68rem] text-emerald-200">Approve</button>
-                <button onClick={() => markApproval(approval.id, "Rejected")} className="rounded-md border border-signal/30 bg-signal/10 px-2 py-1 text-[0.68rem] text-signal">Reject</button>
-                <button onClick={() => markApproval(approval.id, "Escalated")} className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[0.68rem] text-frost">Escalate</button>
+              <div className="mt-3 grid gap-2 text-[0.68rem] text-frost/75">
+                <div className="flex items-center justify-between border-t border-white/8 pt-2">
+                  <span className="text-muted">Lock</span>
+                  <span>{approval.lockState}</span>
+                </div>
+                <div className="normal-case leading-5">{approval.note}</div>
+                {approval.steps && approval.steps.length ? (
+                  <div className="rounded-2xl border border-white/8 bg-black/30 p-2">
+                    <div className="text-[0.55rem] uppercase tracking-[0.2em] text-amber">REMEDIATION STEPS</div>
+                    <ol className="mt-1 list-decimal space-y-1 pl-4 text-[0.66rem] leading-5 text-frost/85">
+                      {approval.steps.map((step, index) => (
+                        <li key={`${approval.id}-step-${index}`}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+                ) : null}
               </div>
             </div>
+          ))
+        ) : (
+          <div className="w-full">
+            <EmptyOperationalState label="No live remediation actions returned" />
           </div>
-        ))}
+        )}
       </div>
     </Reveal>
   );
 }
 
-function AuditLogs() {
+function AuditLogs({ rows }: { rows?: AuditRow[] }) {
   const [query, setQuery] = useState("");
   const [timeWindow, setTimeWindow] = useState<"hourly" | "daily" | "weekly" | "monthly">("daily");
+  const sourceRows = Array.isArray(rows) ? rows : [];
 
   const filtered = useMemo(() => {
     const text = query.toLowerCase();
-    return auditSeed.filter((row) =>
+    return sourceRows.filter((row) =>
       `${row.incidentId} ${row.account} ${row.remediation} ${row.reviewer} ${row.compliance} ${row.evidencePack}`
         .toLowerCase()
         .includes(text)
     );
-  }, [query]);
+  }, [query, sourceRows]);
 
   return (
     <Reveal className="glass overflow-hidden p-4">
@@ -1469,6 +1208,7 @@ function AuditLogs() {
         </div>
       </div>
       <div className="max-h-[300px] overflow-auto scrollbar-mini">
+        {filtered.length ? (
         <table className="w-full min-w-[1000px] border-collapse text-left text-[0.7rem]">
           <thead className="sticky top-0 z-10 bg-black/85 text-[0.56rem] uppercase tracking-[0.18em] text-muted backdrop-blur">
             <tr className="border-b border-white/12">
@@ -1492,6 +1232,9 @@ function AuditLogs() {
             ))}
           </tbody>
         </table>
+        ) : (
+          <EmptyOperationalState label="No live audit records matched" />
+        )}
       </div>
     </Reveal>
   );
@@ -1562,134 +1305,60 @@ function DeploymentInsights() {
   );
 }
 
-function PerformanceIndex() {
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const timer = window.setInterval(() => setTick((value) => value + 1), 2200);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const formula = "(P × Q × 1.5E) + (G × 1.5R) + (C × V)";
-  const weightedRaw = scoreMetrics.reduce((sum, metric) => sum + metric.value * metric.weight, 0);
-  const overallScore = Math.round(weightedRaw / 8 + 0.4);
-  const descriptor = overallScore >= 94 ? "Excellent" : overallScore >= 90 ? "Stable" : overallScore >= 86 ? "Audit Ready" : "High Reliability";
-  const topContributions = scoreMetrics
-    .slice()
-    .sort((a, b) => b.contribution - a.contribution)
-    .slice(0, 3);
-
-  return (
-    <Reveal className="glass overflow-hidden p-3">
-      <SectionHead label="PERFORMANCE SCORING ENGINE" sub="FTE operational score & weighted metric system" />
-      <div className="grid gap-3 items-center lg:grid-cols-[220px_1fr_260px]">
-        {/* LEFT: compact gauge */}
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-white/10 bg-black/25 p-2">
-          <div className="relative h-32 w-32 min-h-[128px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <RadialBarChart innerRadius="68%" outerRadius="100%" data={[{ name: "score", value: overallScore, fill: "#ff3b30" }]} startAngle={90} endAngle={-270}>
-                <RadialBar dataKey="value" background={{ fill: "rgba(255,255,255,0.06)" }} cornerRadius={6} />
-              </RadialBarChart>
-            </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <motion.div key={overallScore} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-3xl font-semibold text-frost">
-                {overallScore}
-              </motion.div>
-              <div className="text-[0.6rem] uppercase tracking-[0.18em] text-muted">FTE SCORE</div>
-            </div>
-          </div>
-          <div className="mt-2 text-[0.68rem] text-amber uppercase tracking-[0.14em]">{descriptor}</div>
-        </div>
-
-        {/* CENTER: formula and weighted summary */}
-        <div className="px-2">
-          <div className="flex items-center justify-between">
-            <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">Formula</div>
-            <div className="text-[0.72rem] uppercase tracking-[0.14em] text-muted">COMPACT WEIGHTED SCORING</div>
-          </div>
-          <div className="mt-2 rounded-2xl border border-white/10 bg-black/25 p-2 text-sm text-frost">
-            <div className="font-mono text-sm">{formula}</div>
-            <div className="mt-2 grid grid-cols-3 gap-2 text-[0.72rem] text-muted">
-              <div>
-                <div className="uppercase text-[0.62rem] text-muted">WEIGHTED SUM</div>
-                <div className="text-frost">{Math.round(weightedRaw)}</div>
-              </div>
-              <div>
-                <div className="uppercase text-[0.62rem] text-muted">GOV FACTOR</div>
-                <div className="text-frost">0.96</div>
-              </div>
-              <div>
-                <div className="uppercase text-[0.62rem] text-muted">AI BONUS</div>
-                <div className="text-frost">+4</div>
-              </div>
-            </div>
-          </div>
-          <div className="mt-2 grid gap-2">
-            {scoreMetrics.map((m) => (
-              <div key={m.key} className="flex items-center justify-between text-[0.72rem]">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 text-[0.78rem] font-semibold text-frost">{m.key}</div>
-                  <div className="text-[0.72rem] text-muted">{m.label}</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="text-[0.8rem] text-frost">{m.value}</div>
-                  <div className="text-[0.72rem] text-muted">{m.delta}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* RIGHT: compact contribution chips */}
-        <div className="px-2">
-          <div className="text-[0.62rem] uppercase tracking-[0.22em] text-amber">Contributions</div>
-          <div className="mt-2 grid gap-2">
-            {scoreMetrics.map((metric) => (
-              <div key={metric.key} className="flex items-center justify-between rounded-full border border-white/6 bg-black/20 px-3 py-1 text-[0.72rem]">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ background: metric.color }} />
-                  <div className="text-frost">{metric.label}</div>
-                </div>
-                <div className="text-[0.85rem] font-semibold text-frost">{metric.contribution}%</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </Reveal>
-  );
-}
-
-function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unread: number }) {
+function OperationsCopilot({ latestEvent, unread }: { latestEvent?: OpsEvent; unread: number }) {
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
-  const [messages, setMessages] = useState([
+  const [loading, setLoading] = useState(false);
+  const [sessionId] = useState(() => `session-${Math.random().toString(36).slice(2, 10)}`);
+  const [messages, setMessages] = useState<CopilotChatMessage[]>([
     { role: "system", text: "Context synchronized. Latest high-risk incident status available.", meta: "memory: incidents / approvals / audit" },
-    { role: "chandra", text: "Latest P1 incident requires supervisor approval before destructive remediation is executed.", meta: "confidence 91% / approval locked" }
+    { role: "chandra", text: "Live operational context is ready. Ask about incidents, approvals, cost posture, compliance, or remediation risk.", meta: "live copilot ready" }
   ]);
-  const [alerts] = useState([
-    "Pending human approvals require review",
-    "P1 incident on Clinical-Data-8821 awaiting lock release",
-    "Escalated GuardDuty action paused for SecOps"
-  ]);
+  const alerts = useMemo(
+    () =>
+      latestEvent
+        ? [
+            `${latestEvent.severity} ${latestEvent.status.toLowerCase()} on ${latestEvent.account}`,
+            `${latestEvent.service} confidence ${latestEvent.confidence}%`,
+            latestEvent.approvalState ? `Approval state: ${latestEvent.approvalState}` : "Live context available"
+          ]
+        : ["No active live incidents returned"],
+    [latestEvent]
+  );
   const suggestions = ["/review-pending-approvals", "/summarize-high-risk-incidents", "/draft-approval-email", "/explain-governance"];
 
-  function submit(value = prompt) {
+  async function submit(value = prompt) {
     const command = value.trim();
-    if (!command) return;
+    if (!command || loading) return;
+    const eventContext = latestEvent
+      ? `${latestEvent.incident} / ${latestEvent.service} / ${latestEvent.account} / ${latestEvent.status}`
+      : "No active live incident context";
+    setLoading(true);
+    setPrompt("");
     setMessages((current) => [
       ...current,
-      { role: "supervisor", text: command, meta: "human supervisor command" },
-      {
-        role: "chandra",
-        text:
-          command.includes("mail") || command.includes("notify")
-            ? `Draft prepared: ${latestEvent.incident} is awaiting review for high-risk remediation with ${latestEvent.confidence}% confidence.`
-            : `Operational guidance: ${latestEvent.incident} is paused until supervisor approval ${latestEvent.status === "Awaiting Approval" ? "is granted" : "is confirmed"}.`,
-        meta: `trace: ${latestEvent.service} / ${latestEvent.account} / ${latestEvent.time}`
-      }
+      { role: "supervisor", text: command, meta: "human supervisor command" }
     ]);
-    setPrompt("");
     setOpen(true);
+    try {
+      const response = await sendCopilotMessage({
+        sessionId,
+        message: `${command}\n\nLive context: ${eventContext}`
+      });
+      setMessages((current) => [...current, response]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Copilot request failed";
+      setMessages((current) => [
+        ...current,
+        {
+          role: "chandra",
+          text: "I could not reach the live copilot endpoint. Operational context is preserved; retry when the backend is reachable.",
+          meta: message
+        }
+      ]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -1733,6 +1402,12 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
                 </div>
                 <p className="text-frost/82">Chandra will not execute dangerous operations until explicit approval is recorded.</p>
               </div>
+              {loading ? (
+                <div className="border border-signal/25 bg-signal/8 p-2 text-[0.7rem] text-frost/82">
+                  <div className="mb-1 text-[0.55rem] uppercase tracking-[0.18em] text-signal">copilot thinking</div>
+                  Querying live operational assistant...
+                </div>
+              ) : null}
             </div>
             <div className="border-t border-white/10 p-3">
               <div className="mb-2 flex flex-wrap gap-1.5">
@@ -1747,10 +1422,11 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
                 <input
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
+                  disabled={loading}
                   placeholder="Ask about approvals, risk, or remediation state"
                   className="min-w-0 flex-1 bg-transparent text-[0.7rem] text-frost outline-none placeholder:text-muted"
                 />
-                <button aria-label="Send" className="text-signal hover:text-frost"><Send size={13} /></button>
+                <button aria-label="Send" disabled={loading} className="text-signal hover:text-frost disabled:opacity-45"><Send size={13} /></button>
               </form>
             </div>
           </motion.div>
@@ -1778,24 +1454,143 @@ function OperationsCopilot({ latestEvent, unread }: { latestEvent: OpsEvent; unr
 export function ChandraExperience() {
   const {
     selectedKRAs,
+    predefinedKras,
     customKras,
     agentName,
+    employeeId,
+    role,
+    maturity,
+    permissions,
     observations,
     costMetrics,
-    setCostMetrics
+    setCostMetrics,
+    setObservations
   } = useOnboarding();
+  const [observationsSync, setObservationsSync] = useState<ObservationsSyncState>({
+    status: observations ? "success" : "loading",
+    attempt: 0,
+    message: observations ? "Live operational intelligence loaded." : "Retrieving live observability data.",
+    nextDelayMs: 0
+  });
+
+  const costMetricsInitRef = useRef(false);
+  const observationsInitRef = useRef(false);
+  const setCostMetricsRef = useRef(setCostMetrics);
+  const setObservationsRef = useRef(setObservations);
+  useEffect(() => {
+    setCostMetricsRef.current = setCostMetrics;
+    setObservationsRef.current = setObservations;
+  }, [setCostMetrics, setObservations]);
 
   useEffect(() => {
+    if (costMetricsInitRef.current) return;
     if (costMetrics) return;
+    costMetricsInitRef.current = true;
     const controller = new AbortController();
+    console.log("FETCHING COST METRICS (once)...");
     fetchCostMetrics({ signal: controller.signal })
-      .then((data) => setCostMetrics(data))
+      .then((data) => {
+        console.log("COST METRICS SUCCESS", data);
+        setCostMetricsRef.current(data);
+      })
       .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
         const message = error instanceof Error ? error.message : "Cost metrics request failed";
-        setCostMetrics(null, message);
+        console.error("COST METRICS ERROR", message);
+        setCostMetricsRef.current(null, message);
       });
     return () => controller.abort();
-  }, [costMetrics, setCostMetrics]);
+  }, []);
+
+  const observationsPayload = useMemo(
+    () => ({
+      region: "us-east-1",
+      kras: buildKraPayload(predefinedKras, customKras),
+      selected_kras: selectedKRAs,
+      custom_kras: customKras,
+      maturity_level: maturity,
+      deployment: {
+        role,
+        permissions,
+        agent_name: agentName,
+        employee_id: employeeId
+      }
+    }),
+    [agentName, employeeId, role, maturity, permissions, predefinedKras, customKras, selectedKRAs]
+  );
+
+  const observationsPayloadRef = useRef(observationsPayload);
+  useEffect(() => {
+    observationsPayloadRef.current = observationsPayload;
+  }, [observationsPayload]);
+
+  useEffect(() => {
+    if (observationsInitRef.current) return;
+    if (observations) {
+      setObservationsSync({
+        status: "success",
+        attempt: 0,
+        message: "Live operational intelligence loaded.",
+        nextDelayMs: 0
+      });
+      return;
+    }
+    observationsInitRef.current = true;
+
+    let cancelled = false;
+    let retryTimer: number | null = null;
+    let controller: AbortController | null = null;
+
+    async function loadOperationalIntelligence(attempt: number) {
+      if (cancelled) return;
+      controller?.abort();
+      controller = new AbortController();
+      console.log(`DASHBOARD SYNC ATTEMPT ${attempt}`, observationsPayloadRef.current);
+      setObservationsSync({
+        status: attempt === 1 ? "loading" : "retrying",
+        attempt,
+        message:
+          attempt === 1
+            ? "Retrieving live observability data from LangGraph."
+            : "Waiting for LangGraph response; retrying security analysis.",
+        nextDelayMs: 0
+      });
+
+      try {
+        const data = await fetchAgentObservations(observationsPayloadRef.current, { signal: controller.signal });
+        if (cancelled) return;
+        console.log("DASHBOARD SYNC SUCCESS", data);
+        setObservationsRef.current(data, null);
+        setObservationsSync({
+          status: "success",
+          attempt,
+          message: "Live operational intelligence loaded.",
+          nextDelayMs: 0
+        });
+      } catch (error) {
+        if (cancelled || controller.signal.aborted) return;
+        const message = error instanceof Error ? error.message : "Operational intelligence request failed";
+        console.error(`DASHBOARD SYNC ERROR (Attempt ${attempt})`, message);
+        const nextDelayMs = Math.min(30_000, 2_000 * 2 ** Math.min(attempt - 1, 4));
+        setObservationsRef.current(null, message);
+        setObservationsSync({
+          status: "retrying",
+          attempt,
+          message: `${message}. Dashboard remains operational while Chandra retries.`,
+          nextDelayMs
+        });
+        retryTimer = window.setTimeout(() => loadOperationalIntelligence(attempt + 1), nextDelayMs);
+      }
+    }
+
+    loadOperationalIntelligence(1);
+
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
+  }, []);
 
   const liveEvents: LiveOpsEvent[] = useMemo(
     () => (observations?.issues ? deriveOpsEvents(observations.issues) : []),
@@ -1806,15 +1601,22 @@ export function ChandraExperience() {
     () => (observations?.actions ? deriveApprovals(observations.actions) : []),
     [observations]
   );
-  const liveCostCards = useMemo(
-    () => (observations?.cost_snapshot ? deriveCostCards(observations.cost_snapshot) : []),
-    [observations]
-  );
   const liveKraEvaluations = useMemo(
     () => (observations?.kra_status ? deriveKraEvaluations(observations.kra_status, customKras) : []),
     [observations, customKras]
   );
   const costBreakdown = useMemo(() => deriveCostBreakdown(costMetrics ?? null), [costMetrics]);
+  const liveCostCards = useMemo<LiveCostCard[]>(() => {
+    const snapshotCards = observations?.cost_snapshot ? deriveCostCards(observations.cost_snapshot) : [];
+    if (snapshotCards.length) return snapshotCards;
+    return costBreakdown.services.map((row) => ({
+      label: row.service,
+      value: `$${row.total.toFixed(2)}`,
+      delta: "live",
+      tone: "text-frost",
+      note: "Derived from live cost metrics service breakdown"
+    }));
+  }, [observations, costBreakdown]);
   const liveSummary = useMemo(() => summarizeIssuesBySeverity(liveEvents), [liveEvents]);
 
   const eventsAsOpsEvent: OpsEvent[] = useMemo(
@@ -1830,7 +1632,11 @@ export function ChandraExperience() {
     [liveApprovals]
   );
 
-  const events = useOperationalFeed(eventsAsOpsEvent.length ? eventsAsOpsEvent : undefined);
+  const events = useOperationalFeed(eventsAsOpsEvent);
+  const auditRows = useMemo(
+    () => deriveAuditRowsFromLive(eventsAsOpsEvent, approvalsAsRow, observations?.compliance_summary),
+    [eventsAsOpsEvent, approvalsAsRow, observations?.compliance_summary]
+  );
   const unread = useMemo(
     () => events.filter((e) => e.severity === "P1" || e.status === "Awaiting Approval" || e.status === "Escalated").length,
     [events]
@@ -1842,11 +1648,10 @@ export function ChandraExperience() {
   const hasCost = selectedKRAs.includes("Cost Optimization");
   const hasDeploy = selectedKRAs.includes("Deployment Intelligence");
   const hasAudit = selectedKRAs.includes("Audit & Compliance");
-  const hasSelectedKras = selectedKRAs.length > 0;
 
   return (
     <main className="bg-obsidian text-frost">
-      <CommandHeader liveObservations={observations} liveSummary={liveSummary} />
+      <CommandHeader liveObservations={observations} liveSummary={liveSummary} sync={observationsSync} />
 
       <section className="section-shell">
         <div className="section-inner grid gap-3 lg:grid-cols-12">
@@ -1864,7 +1669,7 @@ export function ChandraExperience() {
               {hasInfra ? <InfrastructureHealth /> : null}
             </div>
             <div className="lg:col-span-5 space-y-3">
-              {hasIncident ? <LiveOpsStream events={events} /> : null}
+              {hasIncident ? <LiveOpsStream events={events} sync={observationsSync} /> : null}
               {hasDeploy ? <DeploymentInsights /> : null}
             </div>
           </div>
@@ -1874,15 +1679,7 @@ export function ChandraExperience() {
       {hasIncident ? (
         <section className="section-shell">
           <div className="section-inner grid gap-3 lg:grid-cols-12">
-            <div className="lg:col-span-12"><ActiveIncidents source={incidentsAsIncident} /></div>
-          </div>
-        </section>
-      ) : null}
-
-      {(hasInfra || hasIncident || hasDeploy || hasAudit || hasSelectedKras) ? (
-        <section className="section-shell">
-          <div className="section-inner">
-            <div className="w-full"><PerformanceIndex /></div>
+            <div className="lg:col-span-12"><ActiveIncidents source={incidentsAsIncident} sync={observationsSync} /></div>
           </div>
         </section>
       ) : null}
@@ -1892,7 +1689,7 @@ export function ChandraExperience() {
       {hasAudit ? (
         <section className="section-shell">
           <div className="section-inner grid gap-3 lg:grid-cols-12">
-            <div className="lg:col-span-12"><AuditLogs /></div>
+            <div className="lg:col-span-12"><AuditLogs rows={auditRows} /></div>
           </div>
         </section>
       ) : null}
